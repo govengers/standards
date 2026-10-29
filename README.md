@@ -59,6 +59,7 @@ exceptions:             # deliberate deviations, each with a reason
 | [auth.md](rules/service/auth.md) | `AUTH` | authentication, composable authorization |
 | [realtime.md](rules/service/realtime.md) | `RT` | WebSocket events and broadcasting |
 | [logging.md](rules/service/logging.md) | `LOG` | wide events: every failure and every interaction, on every layer |
+| [metrics.md](rules/service/metrics.md) | `MET` | Prometheus: internal `/metrics`, own registry, request rate/errors/duration, label cardinality |
 | [observability.md](rules/service/observability.md) | `OBS` | tracing, version reporting, profiling endpoints |
 | [data-integrity.md](rules/service/data-integrity.md) | `INT` | audit log, soft delete, seeding, external state |
 | [jobs.md](rules/service/jobs.md) | `JOB` | Postgres-backed work queues |
@@ -77,6 +78,7 @@ exceptions:             # deliberate deviations, each with a reason
 | Logging | `govengers/wide-event-logger` (wide events); zerolog only for startup and shutdown lines |
 | Caching | `govengers/cache` |
 | Real-time | WebSocket (gorilla) |
+| Metrics | Prometheus (`client_golang`), own registry, `/metrics` on an internal port |
 | Tracing | OpenTelemetry |
 | Tasks | justfile |
 | Deploy | multi-stage Docker, single binary with embedded frontend, distroless runtime |

@@ -44,7 +44,7 @@ justfile
 - **Check:** layers wired implicitly (package-level initialization, `init()`, lazy singletons); components built anywhere but `main` (ARC-006); serving traffic before migrations ran or config was validated.
 
 ```
-Config -> Logging -> Tracing -> Database pool -> Migrate -> Repositories -> Clients -> Event hub -> Services -> Controllers -> Server -> Run
+Config -> Logging -> Tracing -> Metrics registry -> Database pool -> Migrate -> Repositories -> Clients -> Event hub -> Services -> Controllers -> Server + metrics server -> Run
 ```
 
 `run()` lists the steps; one function per layer in `main.go` builds that layer's components and copies configuration values into their options (FUN-003, CFG-006).

@@ -28,7 +28,7 @@ A misconfigured service crashes on boot, not at 3 AM under load. Once running, i
 
 ## P7 - Every change leaves a trace
 
-Mutations are audited and broadcast. Each unit of work emits one rich, structured wide event, and every failure and every business or technical interaction on every layer is recorded on it. When something goes wrong in production, the answer is in the data, not in a guess.
+Mutations are audited and broadcast. Each unit of work emits one rich, structured wide event, and every failure and every business or technical interaction on every layer is recorded on it. Every service exports the rate, errors and duration of its requests and dependencies as metrics, so dashboards and alerts never depend on reading logs. When something goes wrong in production, the answer is in the data, not in a guess.
 
 ## P8 - Let the machine check it
 

@@ -1,6 +1,6 @@
 # Observability (`OBS`)
 
-Profile: service. Logging has its own file: [logging.md](logging.md).
+Profile: service. Logging and metrics have their own files: [logging.md](logging.md), [metrics.md](metrics.md).
 
 ### OBS-001 Trace across service boundaries with OpenTelemetry
 

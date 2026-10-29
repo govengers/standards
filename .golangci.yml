@@ -77,6 +77,9 @@ linters:
     rules:
       - path: _test\.go
         linters: [funlen] # table tests are long by design
+      - path: _test\.go
+        linters: [gosec]
+        text: "G101|G204" # fake credentials in fixtures; end-to-end harnesses run the binaries they build
     presets:
       - std-error-handling
     paths:

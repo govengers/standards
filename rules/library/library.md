@@ -105,3 +105,24 @@ if errors.Is(err, redis.Nil) {
 }
 return fmt.Errorf("cache get %s: %v", key, err)
 ```
+
+### LIB-011 Export metrics only through a `prometheus.Registerer` the caller passes in
+
+- **Severity:** must
+- **Principle:** P3, P2
+- **Check:** a library that registers collectors on `prometheus.DefaultRegisterer`, through `promauto` defaults or `MustRegister`; metrics a caller cannot turn off; a core package that imports `client_golang` only to export metrics.
+
+The caller decides what its binary exports (MET-002). Metrics are opt-in through the options; a nil `Registerer` means none. When the core does not otherwise need `client_golang`, keep it out of the consumer's dependencies: the core offers counters or hooks, and a `prometheusadapter` subpackage turns them into collectors (LIB-007). Registration errors are returned from the constructor, never panicked.
+
+```go
+// bad
+func New(options *Options) *Cache {
+    prometheus.MustRegister(hitsTotal)
+    ...
+}
+
+// good
+type Options struct {
+    Registerer prometheus.Registerer // optional; nil exports no metrics
+}
+```
