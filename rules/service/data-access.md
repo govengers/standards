@@ -119,10 +119,19 @@ ALTER TABLE products ADD COLUMN archived_at timestamptz;
 | closed set of values | `CREATE TYPE ... AS ENUM` (sqlc emits typed constants) or `CHECK (col IN (...))` |
 | non-empty, length, range, format | `CHECK (col <> '')`, `CHECK (char_length(col) <= n)`, `CHECK (col BETWEEN a AND b)` |
 | relation | foreign key with an explicit `ON DELETE` |
-| id | `DEFAULT uuidv7()` (Postgres 18) |
+| id | `DEFAULT uuidv7()` or `DEFAULT uuidv4()` (Postgres 18), chosen per table |
 | timestamps | `DEFAULT now()` plus a `set_updated_at()` `BEFORE UPDATE` trigger |
 
 Keep validation at the API boundary for readable 400s; the constraint is the backstop no code path can skip.
+
+Pick the UUID version per table:
+
+| Version | Use for | Why |
+|---------|---------|-----|
+| `uuidv7()` | the default: tables that grow, are written often or are read in creation order (orders, events, audit logs, messages) | the leading millisecond timestamp makes inserts append at the right edge of the B-tree, so the index stays compact and hot in cache; random keys spread writes across every page |
+| `uuidv4()` | IDs whose creation time must not leak to whoever sees them (users, accounts, anything that reveals growth or signup dates), and small tables where index locality does not matter | fully random, so the ID says nothing about when the row was made |
+
+A large table whose ID is public and must not reveal its creation time gets a `uuidv7()` primary key plus a separate unique `uuidv4()` public ID; only the public ID leaves the service. Neither version is a secret: invite links, reset tokens and API keys use a random token from `crypto/rand`, never a row ID.
 
 ### DAT-008 Read-modify-write runs in one transaction with a row lock
 
