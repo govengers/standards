@@ -1,6 +1,6 @@
 # Logging (`LOG`)
 
-Profile: service. Library: `govengers/wide-event-logger` (module `github.com/mxcd/go-wide-event-logger`, package `wideevent`).
+Profile: service. Library: `github.com/govengers/wide-event-logger` v1 (package `wideevent`, Gin middleware in `ginadapter`).
 
 We log in wide events. Each unit of work (request, job, cron run, consumer message) produces **one** structured event, and everything that happens during that work is recorded on it: every failure, every business decision, every technical interaction on every layer. When something goes wrong in production, the event for that request should answer what happened without anyone reproducing it.
 
@@ -23,7 +23,7 @@ We log in wide events. Each unit of work (request, job, cron run, consumer messa
 
 - **Severity:** must
 - **Principle:** P7
-- **Check:** HTTP routes not covered by `wideevent.Middleware`; jobs, cron runs, queue consumers, WebSocket message handlers or startup tasks without their own `wideevent.Begin(...)` and a deferred `Emit()`; units of work that emit several events.
+- **Check:** HTTP routes not covered by the `ginadapter.NewMiddleware` middleware; jobs, cron runs, queue consumers, WebSocket message handlers or startup tasks without their own `wideevent.Begin(...)` and a deferred `Emit()`; units of work that emit several events.
 
 The middleware creates the request event and emits it after the handler. Everything else starts its own and puts it into the context, so the layers below can find it.
 
@@ -70,9 +70,7 @@ if err != nil {
 // good
 user, err := r.userCache.Get(ctx, id)
 if err != nil {
-    if we := wideevent.FromContext(ctx); we != nil {
-        we.Err("cache.error", err).Str("cache.fallback", "database").Bool("degraded", true)
-    }
+    wideevent.FromContext(ctx).Err("cache.error", err).String("cache.fallback", "database").Bool("degraded", true)
     user, err = r.loadUser(ctx, id)
 }
 ```
@@ -88,10 +86,10 @@ The same applies to retries (`http.attempts`, `http.last_error`), validation fai
 At minimum: the action, the IDs of the affected objects, the actor, the outcome, and the decision values that drove a branch.
 
 ```go
-we.Str("action", "subscription.cancel").
+we.String("action", "subscription.cancel").
     UUID("business.id", businessID).
-    Str("subscription.status_before", string(before.Status)).
-    Str("subscription.status_after", string(after.Status)).
+    String("subscription.status_before", string(before.Status)).
+    String("subscription.status_after", string(after.Status)).
     Bool("subscription.refund_issued", refunded)
 ```
 
@@ -118,13 +116,12 @@ Each layer adds fields under its own namespace. Nothing is too small to record i
 ```go
 start := time.Now()
 response, err := c.httpClient.Do(request)
-if we := wideevent.FromContext(ctx); we != nil {
-    we.Dur("http.stripe.duration", time.Since(start)).Int("http.stripe.attempts", attempt+1)
-    if response != nil {
-        we.Int("http.stripe.status", response.StatusCode)
-    }
-    we.Err("http.stripe.error", err)
+we := wideevent.FromContext(ctx)
+we.Duration("http.stripe.duration", time.Since(start)).Int("http.stripe.attempts", attempt+1)
+if response != nil {
+    we.Int("http.stripe.status", response.StatusCode)
 }
+we.Err("http.stripe.error", err)
 ```
 
 Put the instrumentation into the shared client, repository helper or middleware once, so individual call sites do not have to remember it.
@@ -148,7 +145,7 @@ Every setter appends a field, so per-iteration writes grow the event without lim
 ```go
 // bad
 for _, item := range items {
-    we.Str("item.id", item.ID.String())
+    we.String("item.id", item.ID.String())
 }
 
 // good
@@ -157,27 +154,23 @@ we.Int("import.items", len(items)).Int("import.failed", failed).Err("import.firs
 
 ### LOG-007 Guard against a missing event
 
-- **Severity:** must
-- **Principle:** P6
-- **Check:** methods called on the result of `wideevent.FromContext(ctx)` without a nil check.
-
-Code outside a unit of work (tests, startup, a context without an event) gets `nil`, and calling a setter on it panics. Check for nil at every use, or start an event in that code path.
+- **Status:** deprecated (30.10.2026, wide-event-logger v1: every method of a nil `*wideevent.Event` does nothing, so `wideevent.FromContext(ctx).String(...)` is safe without a nil check)
 
 ### LOG-008 Never write to an event after it was emitted
 
 - **Severity:** must
 - **Principle:** P7
-- **Check:** a goroutine started from a handler that enriches the request's wide event (via `FromGin`/`FromContext`) after the response may already have been sent.
+- **Check:** a goroutine started from a handler that enriches the request's wide event (via `ginadapter.FromContext`/`wideevent.FromContext`) after the response may already have been sent.
 
 The middleware emits once when the handler returns, and later writes are silently lost. Detached work (CON-003) starts its own event with `wideevent.Begin` and carries the request ID from the parent so the two can be correlated.
 
 ```go
-requestID := ginContext.GetHeader("X-Request-ID")
+requestID := ginContext.Writer.Header().Get(ginadapter.RequestIDHeader) // the middleware sets it, generated if the client sent none
 detached := context.WithoutCancel(ctx)
 safeGo(func() {
     we := wideevent.Begin(emitter, "notify_subscribers")
     defer we.Emit()
-    we.Str("request.parent_id", requestID)
+    we.String("request.parent_id", requestID)
     notifySubscribers(wideevent.NewContext(detached, we), item)
 })
 ```
@@ -186,29 +179,15 @@ safeGo(func() {
 
 - **Severity:** must
 - **Principle:** P6
-- **Check:** passwords, tokens, API keys, session IDs, full request or response bodies, email addresses, names or free-text user input written to the event; the `wideevent` middleware installed without a pre-enricher that replaces `request.query` with a redacted copy.
+- **Check:** passwords, tokens, API keys, session IDs, full request or response bodies, email addresses, names or free-text user input written to the event; a `QueryAllowlist` of the `ginadapter` middleware that names a parameter carrying secrets or personal data (tokens, codes, emails, search terms).
 
-Record IDs, not personal data. Events go to a shared log store with longer retention and wider access than the database. The middleware records `request.query` verbatim, and query strings carry search terms, emails and sometimes tokens. The JSON emitter keeps the latest value of a key, so a pre-enricher overwrites it:
+Record IDs, not personal data. Events go to a shared log store with longer retention and wider access than the database. The middleware records `request.query` with every value replaced by `redacted`; allow only the parameters known to be harmless:
 
 ```go
-var loggableQueryParameters = map[string]bool{"limit": true, "offset": true, "sort": true, "order": true}
-
-// redactedQuery keeps every parameter name but only the values known to be harmless.
-func redactedQuery(values url.Values) string {
-    redacted := url.Values{}
-    for key, parameterValues := range values {
-        if loggableQueryParameters[key] {
-            redacted[key] = parameterValues
-        } else {
-            redacted.Set(key, "redacted")
-        }
-    }
-    return redacted.Encode()
-}
-
-wideevent.WithPreEnricher(func(we *wideevent.Event, ginContext *gin.Context) {
-    we.Set("request.query", redactedQuery(ginContext.Request.URL.Query()))
-}),
+middleware, err := ginadapter.NewMiddleware(&ginadapter.Options{
+    Emitter:        emitter,
+    QueryAllowlist: []string{"limit", "offset", "sort", "order"},
+})
 ```
 
 ### LOG-010 Keep every error and every degraded event when sampling
@@ -225,16 +204,15 @@ keepDegraded := wideevent.SamplerFunc(func(candidate *wideevent.Event) bool {
     return degraded
 })
 
-engine.Use(wideevent.Middleware(
-    wideevent.WithEmitter(emitter),
-    wideevent.WithSampler(wideevent.CompositeSampler(
+middleware, err := ginadapter.NewMiddleware(&ginadapter.Options{
+    Emitter: wideevent.SampledEmitter(emitter, wideevent.CompositeSampler(
         wideevent.AlwaysOnError(),
         wideevent.AlwaysOnStatus(http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict),
         keepDegraded,
         wideevent.Rate(10), // every 10th of the rest
     )),
-    wideevent.WithSkipPaths("/api/health"),
-))
+    SkipPaths: []string{"/api/health"},
+})
 ```
 
 Business events that must never be lost (payments, permission changes) belong in the audit log ([INT-001](data-integrity.md#int-001-audit-every-mutation-in-the-same-transaction)), not only in sampled logs.
@@ -262,9 +240,13 @@ Plain log lines are for what happens outside any unit of work: startup, config p
 - **Check:** JSON output in local dev, or the colorized dev emitter in a deployed environment.
 
 ```go
-emitter := wideevent.JSONStdoutEmitter()
+var emitter wideevent.Emitter = wideevent.NewJSONEmitter(nil) // stdout
 if configuration.DevMode {
-    emitter = wideevent.DevStdoutEmitter()
+    devEmitter, err := wideevent.NewDevEmitter(nil)
+    if err != nil {
+        return err
+    }
+    emitter = devEmitter
 }
 ```
 

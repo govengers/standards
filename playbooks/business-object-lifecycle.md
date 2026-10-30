@@ -213,11 +213,9 @@ func checkPrice(priceCents, maximumPriceCents int64) error {
     return nil
 }
 
-// recordProductAction adds the business action to the request's wide event [LOG-003, LOG-007].
+// recordProductAction adds the business action to the request's wide event [LOG-003].
 func recordProductAction(ctx context.Context, action string, productID uuid.UUID) {
-    if we := wideevent.FromContext(ctx); we != nil {
-        we.Str("action", action).UUID("product.id", productID)
-    }
+    wideevent.FromContext(ctx).String("action", action).UUID("product.id", productID)
 }
 ```
 

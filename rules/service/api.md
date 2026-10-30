@@ -27,9 +27,7 @@ Controllers map the `model` sentinel errors (ERR-005) that services and reposito
 
 ```go
 func respondError(ginContext *gin.Context, err error) {
-    if we := wideevent.FromGin(ginContext); we != nil {
-        we.Failure(err) // every error response is recorded, 4xx included [LOG-002]
-    }
+    ginadapter.FromContext(ginContext).Failure(err) // every error response is recorded, 4xx included [LOG-002]
     status, response := errorResponse(err)
     ginContext.AbortWithStatusJSON(status, response)
 }
@@ -87,9 +85,7 @@ func (c *ProductController) getProductHandler() gin.HandlerFunc {
 
 // respond writes a success response and marks the wide event as successful [LOG-011].
 func respond(ginContext *gin.Context, status int, body any) {
-    if we := wideevent.FromGin(ginContext); we != nil {
-        we.Success()
-    }
+    ginadapter.FromContext(ginContext).Success()
     ginContext.JSON(status, body)
 }
 ```
