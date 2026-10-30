@@ -152,3 +152,57 @@ func (u *User) Email() string { return u.email }
 - **Check:** a `*wideevent.Event` variable named `wideEvent`, `event`, `e`, `evt` or `logEvent`.
 
 One name across the org makes `we.Success()` and `we.Failure(err)` instantly recognizable in any repo, and `event` stays free for the realtime package.
+
+### NAM-008 Name what a value means, not its type
+
+- **Severity:** should
+- **Principle:** P1
+- **Check:** a type or container encoded into a name (`userSlice`, `userList`, `nameString`, `idMap`, `countInt`, `userStruct`, `pointerToUser`) where the meaning is available instead (`users`, `name`, `usersByID`, `count`, `user`).
+
+The compiler and the editor know the type; the name says what the value is for. When one value exists in two representations in the same scope, naming the representation is the meaning: `rawBody` and `body`, `idText` and `id`.
+
+```go
+// bad
+userMap := make(map[uuid.UUID]*model.User, len(userSlice))
+
+// good
+usersByID := make(map[uuid.UUID]*model.User, len(users))
+```
+
+### NAM-009 Distinct names mean distinct things
+
+- **Severity:** should
+- **Principle:** P1
+- **Check:** noise words that add no meaning to a name (`userData`, `UserInfo`, `productObject`, `theUser`, `orderStuff`); names that differ only by a number or a noise word (`user1` and `user2`, `UserInfo` next to `UserData`); type names ending in `Manager`, `Processor` or `Helper` that hide what the type does.
+
+If two names exist, a reader assumes two different things. `UserInfo` and `UserData` force them to read both to learn the difference. Name the difference instead: `UserProfile` and `UserCredentials`, `buyer` and `seller`, `previousUser` and `updatedUser`.
+
+```go
+// bad
+func transfer(account1, account2 *model.Account, amountCents int64) error
+
+// good
+func transfer(source, destination *model.Account, amountCents int64) error
+```
+
+### NAM-010 Name magic values with constants
+
+- **Severity:** should
+- **Principle:** P1
+- **Check:** a number or string literal in a condition, calculation or call whose meaning the line does not state (`if len(lines) > 100`, `status == "A"`, `time.Sleep(3 * time.Second)` inside business logic); the same meaningful literal repeated in several functions. Not findings: `0`, `1`, `-1` and `2` in obvious arithmetic, a literal assigned to a named field, option or constant (`ReadHeaderTimeout: 5 * time.Second`), format strings, test data.
+
+The constant's name tells the reader what the number means, and it is the one place to change it. Closed sets of values become typed constants (DES-009).
+
+```go
+// bad
+if len(input.Lines) > 100 {
+    return fmt.Errorf("%d lines: %w", len(input.Lines), model.ErrInvalid)
+}
+
+// good
+const maximumLinesPerOrder = 100
+
+if len(input.Lines) > maximumLinesPerOrder {
+    return fmt.Errorf("%d lines: %w", len(input.Lines), model.ErrInvalid)
+}
+```

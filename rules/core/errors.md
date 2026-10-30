@@ -206,3 +206,23 @@ func validate(user User) error {
     return nil
 }
 ```
+
+### ERR-009 Never return a nil value together with a nil error
+
+- **Severity:** must
+- **Principle:** P4
+- **Check:** enforced by `nilnil` in [.golangci.yml](../../.golangci.yml): `return nil, nil` from a function returning a pointer, interface, function or channel with an error.
+
+A caller that checked `err` dereferences the value and panics. "Nothing there" is a condition the caller branches on, so it is a sentinel error (ERR-005), or a `bool` result when absence is normal (`Get(key) (V, bool)`).
+
+```go
+// bad
+if errors.Is(err, pgx.ErrNoRows) {
+    return nil, nil
+}
+
+// good
+if errors.Is(err, pgx.ErrNoRows) {
+    return nil, fmt.Errorf("user %s: %w", id, model.ErrNotFound)
+}
+```

@@ -167,3 +167,38 @@ func TestOrderTotalCents(t *testing.T) {
     }
 }
 ```
+
+### FUN-006 Name non-trivial conditions, and state them positively
+
+- **Severity:** should
+- **Principle:** P1
+- **Check:** a condition with more than two clauses, or with a clause whose meaning takes thought (time arithmetic, bit masks, `!(a || !b)`), that is not a named variable or predicate function; negated names that force double negation (`notFound`, `isNotValid`, `if !disableCache`).
+
+A named condition is the alternative to a comment above the `if` (CMT-001). The predicate is also a pure decision that a table test covers (FUN-005). Name booleans for the positive case and negate at the call site.
+
+```go
+// bad
+if user.Active && !user.Locked && (user.ExpiresAt.IsZero() || user.ExpiresAt.After(now)) {
+    ...
+}
+if !notFound { ... }
+
+// good
+if user.CanSignIn(now) {
+    ...
+}
+if found { ... }
+
+func (u *User) CanSignIn(now time.Time) bool {
+    stillValid := u.ExpiresAt.IsZero() || u.ExpiresAt.After(now)
+    return u.Active && !u.Locked && stillValid
+}
+```
+
+### FUN-007 Order a file top-down
+
+- **Severity:** should
+- **Principle:** P1
+- **Check:** a helper declared above the functions that call it, so the file reads details before the story; a type's constructor and methods split up by unrelated declarations.
+
+A file reads like a newspaper: the exported entry points first, the helpers they call below them, in the order they are called. Per type: the type, its options, its constructor, its methods, then the unexported helpers. A reader stops reading once they know enough.

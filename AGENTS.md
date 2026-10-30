@@ -6,7 +6,7 @@ This repo is the govengers Go standards: principles in `MANIFESTO.md`, graded ru
 
 1. Determine the profile exactly as `REVIEW.md` step 2 does: `.govengers.yml` in the repo root, otherwise a repo with a `cmd/` entry point that serves traffic or runs as a process is `service`, everything else `library`.
 2. Always load these, they apply to every line you write:
-   - `rules/core/naming.md`, `rules/core/functions.md`, `rules/core/design.md`, `rules/core/errors.md`
+   - `rules/core/naming.md`, `rules/core/functions.md`, `rules/core/comments.md`, `rules/core/design.md`, `rules/core/errors.md`
    - service: `rules/service/architecture.md`; library: `rules/library/library.md`
 3. Then load the files for what the task touches. `rules/service/` files apply to the service profile only; a library applies `rules/core/` and `rules/library/`:
 
@@ -28,6 +28,7 @@ The non-negotiables, in one line each:
 
 - Spell every name out; only receivers, type parameters, `ctx`, `err`, test handles and the listed initialisms are short (NAM-001).
 - A function does one thing, at one level of abstraction, with no side effect its name does not announce (FUN-001, FUN-002, FUN-003).
+- Names explain the code; a comment says only why, never what. Not every function gets a doc comment (CMT-001, CMT-002).
 - Every component is built with `New...(options *...Options)`; only `main` reads configuration and wires components (DES-001, CFG-006, ARC-006).
 - Services are cut into controller -> service -> repository / client; no layer is skipped (ARC-001, ARC-002).
 - Errors are returned with context and handled once (ERR-003, ERR-004).
@@ -37,7 +38,7 @@ Done means the repo's `just check` (lint with `.golangci.yml`, vet, race tests, 
 
 ## Working on this repo
 
-- **Reviewing a Go repo against the standards:** follow `REVIEW.md`.
+- **Reviewing a Go repo against the standards:** follow `REVIEW.md`; in Claude Code the `govengers-review` skill (`skills/govengers-review/`) runs it with parallel subagents.
 - **Adding or changing a rule:** follow `CONTRIBUTING.md`. Keep the rule format exact; the reviewer parses heading, severity, principle and check.
 - Never renumber or reuse a rule ID. Deprecate instead.
 - Playbooks must not contradict the rules. When you change a rule, update the playbooks and examples that show the old pattern.

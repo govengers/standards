@@ -102,6 +102,22 @@ type UserProvider interface {
 
 Write the concrete thing. Extract when the second real caller shows up.
 
+### DES-010 Keep each piece of knowledge in one place
+
+- **Severity:** should
+- **Principle:** P1, P2
+- **Check:** the same decision logic (a business rule, validation, calculation, permission or error mapping) written out in two or more places; in a change review, the change adds the second copy instead of calling the first. Code that only looks alike (handler skeletons, wiring, test setup) is not a finding.
+
+Two copies of a rule drift: one gets the fix, the other keeps the bug. Extract the rule into a function named after what it decides and call it from both places. Code with the same shape but different knowledge stays separate; merging it couples things that change for different reasons (DES-005).
+
+```go
+// bad: the controller and the import job each decide what a valid SKU is
+if len(sku) != 8 || !strings.HasPrefix(sku, "SKU") { ... }
+
+// good: one place decides
+func validSKU(sku string) bool
+```
+
 ### DES-006 Encapsulate: export the minimum
 
 - **Severity:** should

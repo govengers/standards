@@ -48,13 +48,21 @@ A library whose purpose is reading configuration (`govengers/config`) does so on
 
 - **Severity:** must
 - **Principle:** P1
-- **Check:** a package without a package comment; exported types, functions, methods or constants without a doc comment starting with their name.
+- **Check:** a package without a package comment; exported types, functions, methods or constants without a doc comment starting with their name. Enforced by revive's `exported` (without the baseline's `disable-checks-on-*` arguments) and `package-comments`, which a library enables in its `.golangci.yml`.
 
-State concurrency safety and ownership where it is not obvious: "safe for concurrent use", "the caller must close the returned reader".
+A library's doc comments are its manual: `go doc` and pkg.go.dev show nothing else. The comment states the contract the signature cannot (CMT-002): the errors a caller should match, what nil or zero arguments mean, units, ownership and concurrency safety where they are not obvious ("safe for concurrent use", "the caller must close the returned reader"). When the name says it all, one short sentence is enough.
 
 ```go
 // Cache is a typed LRU cache with per-entry TTL. It is safe for concurrent use.
 type Cache[K comparable, V any] struct { ... }
+```
+
+```yaml
+# .golangci.yml of a library
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
 ```
 
 ### LIB-006 Show usage with runnable examples

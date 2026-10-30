@@ -4,7 +4,7 @@ What we believe about building software in Go. These are not graded directly; th
 
 ## P1 - Clean code is the product
 
-Code is read far more often than it is written, by people and by agents. Names say what a thing is, spelled out, never abbreviated. A function does one thing, at one level of abstraction, and changes nothing its name does not announce. Packages hide their internals. We leave every piece of code we touch in a better state than we found it. Working but unreadable code is unfinished.
+Code is read far more often than it is written, by people and by agents. Names say what a thing is, spelled out, never abbreviated. A function does one thing, at one level of abstraction, and changes nothing its name does not announce. Code explains itself through its names: a comment that explains what the code does means a name is wrong. Comments say why, warn, or document a public contract; not every function needs one. Packages hide their internals. We leave every piece of code we touch in a better state than we found it. Working but unreadable code is unfinished.
 
 ## P2 - Boring beats clever
 

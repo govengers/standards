@@ -7,6 +7,7 @@ How we write Go in the govengers org, and the source of truth a review agent mea
 - [playbooks/](playbooks/) - step-by-step guides. Guidance, not graded.
 - [AGENTS.md](AGENTS.md) - what a coding agent reads before writing Go, by task.
 - [REVIEW.md](REVIEW.md) - how a review agent applies the rules.
+- [skills/govengers-review/](skills/govengers-review/SKILL.md) - Claude Code skill that runs REVIEW.md with parallel review agents. Install: `ln -s "$PWD/skills/govengers-review" ~/.claude/skills/govengers-review`.
 - [CONTRIBUTING.md](CONTRIBUTING.md) - how to add or change a rule.
 - [.golangci.yml](.golangci.yml) - the lint baseline. Anything a linter can catch lives there, not in prose.
 
@@ -35,6 +36,7 @@ exceptions:             # deliberate deviations, each with a reason
 | [errors.md](rules/core/errors.md) | `ERR` | returning, wrapping, matching and logging errors |
 | [naming.md](rules/core/naming.md) | `NAM` | spelled-out names, initialisms, packages, receivers |
 | [functions.md](rules/core/functions.md) | `FUN` | one job, no hidden side effects, one level of abstraction, pure decisions |
+| [comments.md](rules/core/comments.md) | `CMT` | names over comments, doc comments with a contract, no commented-out code |
 | [design.md](rules/core/design.md) | `DES` | options pattern, no init, no globals, interfaces, encapsulation |
 | [concurrency.md](rules/core/concurrency.md) | `CON` | goroutines, context, shared state, channels |
 | [resilience.md](rules/core/resilience.md) | `RES` | timeouts, retries, idempotency for outbound calls |
