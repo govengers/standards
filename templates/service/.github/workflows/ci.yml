@@ -5,7 +5,7 @@ name: CI
 # Every push and pull request: lint, unit tests of changed and affected packages (TST-014), the end-to-end suite
 # unless server and suite are unchanged (TST-015), vulncheck. A push to main or a v* tag then builds, attests and
 # pushes the image: :main on main, :1.2.3 and the moving :1.2, :1, :latest on a tag. Nightly: every test,
-# uncached, so a flaky test cannot hide in the cache for longer than a day.
+# uncached, so a flaky test cannot hide in the cache for longer than a day; a v* tag runs everything uncached too.
 on:
   push:
     branches: [main]
@@ -28,7 +28,7 @@ jobs:
     with:
       image: ghcr.io/govengers/example
       dockerfile: docker/server.Dockerfile
-      full: ${{ github.event_name == 'schedule' }}
+      full: ${{ github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v') }}
     permissions:
       contents: write # badges branch
       packages: write # push to ghcr.io
