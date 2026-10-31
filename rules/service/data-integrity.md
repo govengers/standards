@@ -37,7 +37,7 @@ err := inTransaction(ctx, r.options.Pool, func(queries *sqlc.Queries) error {
 - **Principle:** P7
 - **Check:** inserts or updates that do not set `created_by` / `updated_by` from `actor.ID(ctx)`; update audit entries without old and new values of the changed fields.
 
-System operations (seeds, webhooks, jobs) use `SystemUserID`, never `uuid.Nil` by accident or a made-up user.
+System operations (seeds, webhooks, scheduled jobs) use `SystemUserID`, never `uuid.Nil` by accident or a made-up user. A job a user started acts as that user (JOB-011).
 
 ### INT-003 Skip no-op updates
 

@@ -65,7 +65,7 @@ exceptions:             # deliberate deviations, each with a reason
 | [metrics.md](rules/service/metrics.md) | `MET` | Prometheus: internal `/metrics`, own registry, request rate/errors/duration, label cardinality |
 | [observability.md](rules/service/observability.md) | `OBS` | tracing, version reporting, profiling endpoints |
 | [data-integrity.md](rules/service/data-integrity.md) | `INT` | audit log, soft delete, seeding, external state |
-| [jobs.md](rules/service/jobs.md) | `JOB` | Postgres-backed work queues |
+| [jobs.md](rules/service/jobs.md) | `JOB` | background jobs and schedules with govengers/jobs |
 | [deployment.md](rules/service/deployment.md) | `DEP` | Docker build, single binary, runtime image |
 
 ## Standard stack (service profile)

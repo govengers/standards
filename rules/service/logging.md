@@ -25,14 +25,14 @@ We log in wide events. Each unit of work (request, job, cron run, consumer messa
 - **Principle:** P7
 - **Check:** HTTP routes not covered by the `ginadapter.NewMiddleware` middleware; jobs, cron runs, queue consumers, WebSocket message handlers or startup tasks without their own `wideevent.Begin(...)` and a deferred `Emit()`; units of work that emit several events.
 
-The middleware creates the request event and emits it after the handler. Everything else starts its own and puts it into the context, so the layers below can find it.
+The middleware creates the request event and emits it after the handler. Jobs of govengers/jobs get theirs from `wideeventadapter.NewMiddleware` (JOB-010). Everything else starts its own and puts it into the context, so the layers below can find it.
 
 ```go
-func (w *Worker) handle(ctx context.Context, job *model.Job) (err error) {
-    we := wideevent.Begin(w.options.Emitter, "job."+job.Queue)
+func (c *Consumer) handle(ctx context.Context, message *model.InboundMessage) (err error) {
+    we := wideevent.Begin(c.options.Emitter, "message."+message.Topic)
     defer func() {
         if recovered := recover(); recovered != nil {
-            err = fmt.Errorf("job %s panicked: %v", job.ID, recovered) // record it as a failure, not as a success
+            err = fmt.Errorf("message %s panicked: %v", message.ID, recovered) // record it as a failure, not as a success
         }
         if err != nil {
             we.Failure(err)
@@ -41,9 +41,9 @@ func (w *Worker) handle(ctx context.Context, job *model.Job) (err error) {
         }
         we.Emit()
     }()
-    we.UUID("job.id", job.ID).Int("job.attempt", job.Attempt)
+    we.UUID("message.id", message.ID).Int("message.delivery", message.Delivery)
     ctx = wideevent.NewContext(ctx, we)
-    return w.options.Handler(ctx, job)
+    return c.options.Handler(ctx, message)
 }
 ```
 
