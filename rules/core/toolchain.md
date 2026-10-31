@@ -57,7 +57,7 @@ The reviewer reports lint, vet and test failures under this rule.
 - **Principle:** P2, P8
 - **Check:** no `justfile`, or CI steps that run commands the justfile does not offer (so local and CI checks drift apart).
 
-Standard recipes: `just build`, `just test`, `just lint`, `just generate`, and `just check` running everything CI runs. CI calls the same recipes.
+Standard recipes: `just build`, `just test` (changed packages, TST-014), `just test-all` (every package, uncached), `just test-e2e` (skips an unchanged artifact, TST-015), `just test-e2e-all`, `just lint`, `just generate`, and `just check` running everything CI runs on a change. CI calls the same recipes. Start from [templates/](../../templates/).
 
 ### TCH-006 Format with gofumpt and goimports
 

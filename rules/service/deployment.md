@@ -39,11 +39,13 @@ COPY --from=ui /src/dist/spa internal/web/html
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/server ./cmd/server
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/server /server
-USER nonroot:nonroot
+USER 65532:65532 # distroless nonroot, numeric so runAsNonRoot can verify it
 ENTRYPOINT ["/server"]
 ```
+
+The full version with cross-compilation, digest-pinned bases and a build cache mount is [templates/service/docker/server.Dockerfile](../../templates/service/docker/server.Dockerfile).
 
 `-s -w` strips the symbol table and DWARF. Panic stack traces still show functions and lines (they come from the runtime's own tables); what you lose is debugger support, which a production image does not need.
 
@@ -51,7 +53,7 @@ ENTRYPOINT ["/server"]
 
 - **Severity:** must
 - **Principle:** P10
-- **Check:** runtime stage running as root; a full OS image (`debian`, `ubuntu`, `golang`) as the runtime stage.
+- **Check:** runtime stage running as root; a full OS image (`debian`, `ubuntu`, `golang`) as the runtime stage; `USER` given by name instead of a numeric UID (Kubernetes `runAsNonRoot` cannot verify a name and refuses to start the pod).
 
 Default to `distroless/static:nonroot`: no shell, no package manager. Use Alpine only when the service needs a shell or system tools at runtime, and still with a non-root user.
 

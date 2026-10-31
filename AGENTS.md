@@ -22,7 +22,7 @@ This repo is the govengers Go standards: principles in `MANIFESTO.md`, graded ru
 | tracing, version reporting, profiling | `rules/service/observability.md` |
 | WebSocket, broadcasts | `rules/service/realtime.md` |
 | tests | `rules/core/testing.md` |
-| startup, shutdown, Dockerfile, CI | `rules/service/layout.md`, `rules/service/deployment.md`, `rules/core/toolchain.md` |
+| startup, shutdown, Dockerfile, CI | `rules/service/layout.md`, `rules/service/deployment.md`, `rules/core/toolchain.md`; start from `templates/` |
 
 The non-negotiables, in one line each:
 

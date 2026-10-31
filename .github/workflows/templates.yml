@@ -1,0 +1,38 @@
+name: Templates
+
+# The templates are copied into every new repo, so they are checked like code: workflows with actionlint, the
+# Dockerfile with hadolint, the justfiles by parsing them with just.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: actionlint, hadolint, just
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: "1.59.0"
+
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 templates/service/.github/workflows/ci.yml templates/library/.github/workflows/ci.yml .github/workflows/templates.yml
+
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint:v2.15.1 hadolint - < templates/service/docker/server.Dockerfile
+
+      - name: justfiles parse
+        run: |
+          just --justfile templates/service/justfile --summary
+          just --justfile templates/library/justfile --summary

@@ -1,0 +1,36 @@
+name: CI
+
+# Template for a govengers service (govengers/standards templates/service). Replace "example" with the service name.
+#
+# Every push and pull request: lint, unit tests of changed and affected packages (TST-014), the end-to-end suite
+# unless server and suite are unchanged (TST-015), vulncheck. A push to main or a v* tag then builds, attests and
+# pushes the image: :main on main, :1.2.3 and the moving :1.2, :1, :latest on a tag. Nightly: every test,
+# uncached, so a flaky test cannot hide in the cache for longer than a day.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  schedule:
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run; pushes to main and tags always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  service:
+    uses: govengers/.github/.github/workflows/go-service.yml@v1
+    with:
+      image: ghcr.io/govengers/example
+      dockerfile: docker/server.Dockerfile
+      full: ${{ github.event_name == 'schedule' }}
+    permissions:
+      contents: write # badges branch
+      packages: write # push to ghcr.io
+      id-token: write # keyless signing of the build provenance
+      attestations: write # store the attestation

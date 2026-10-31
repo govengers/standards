@@ -228,7 +228,7 @@ db-check: db-lint
     psql "{{admin_url}}" -qc 'DROP DATABASE IF EXISTS sqlc_check' -c 'CREATE DATABASE sqlc_check'
     DATABASE_URL="{{check_url}}" go run ./cmd/migrate
     SQLC_DATABASE_URL="{{check_url}}" go tool sqlc vet
-    go test ./internal/database/... ./internal/repository/... -count=1
+    go test ./internal/database/... ./internal/repository/...
 ```
 
 After merging branches that add columns, re-run `sqlc generate` and diff: `go build` passes even when a query predates a new column.
