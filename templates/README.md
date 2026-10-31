@@ -19,7 +19,7 @@ Starting points for a new govengers repo. Copy the folder of the profile, replac
 - `just test` runs `go test` without `-count=1`. Go caches every passing package keyed on its compiled test binary and reruns a package only when something linked into it changed: the tests of the changed code and of everything that depends on it, nothing else (TST-014). Coverage is replayed from the cache, so the coverage gate still sees every package. This is sound because unit tests are hermetic (TST-013).
 - `just test-e2e` builds the server and the suite reproducibly (`-trimpath -buildvcs=false`, fixed version) and hashes them with the suite's other inputs. A green run records the hash in `sandbox/e2e-passed`; the same hash skips the suite (TST-015).
 - CI restores the Go build cache and the e2e records from earlier runs: pull requests from the newest main run, main from itself. Main saves the build cache, every run saves its e2e records.
-- `just test-all` and `just test-e2e-all` never skip. CI runs them nightly; run them locally before a release.
+- `just test-all` and `just test-e2e-all` never skip. CI runs them nightly and on every `v*` tag, so a release is never tested from the cache.
 
 ## Checked by CI
 
