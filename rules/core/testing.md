@@ -149,12 +149,14 @@ Unit tests prove the parts; the end-to-end suite proves the artifact. For a serv
 The suite lives in `test/e2e/`, every file starts with `//go:build e2e`, and `.golangci.yml` sets `run.build-tags: [e2e]` so lint still sees it. The harness starts the binary from the absolute path in `E2E_BINARY` with `GOCOVERDIR` passed through, waits for `/api/health`, and stops it with SIGTERM and waits for the exit: a binary built with `-cover` writes its coverage data only when it exits normally.
 
 ```just
-test-e2e:
-    mkdir -p sandbox/coverage
-    go build -cover -o sandbox/server ./cmd/server
-    E2E_BINARY={{justfile_directory()}}/sandbox/server GOCOVERDIR={{justfile_directory()}}/sandbox/coverage go test -tags e2e ./test/e2e/... -count=1
+# e2e-build is in TST-015: a reproducible build, so an unchanged binary can skip the suite
+test-e2e-all: e2e-build
+    rm -rf sandbox/coverage && mkdir -p sandbox/coverage
+    E2E_BINARY={{justfile_directory()}}/sandbox/e2e-build/server GOCOVERDIR={{justfile_directory()}}/sandbox/coverage go test -tags e2e -trimpath -buildvcs=false -count=1 ./test/e2e/...
     go tool covdata percent -i=sandbox/coverage
 ```
+
+The suite runs uncached (`-count=1`): it depends on a running binary, which the test cache cannot see. TST-015 decides when it may be skipped.
 
 ### TST-012 Test each layer where its bugs live
 
@@ -170,3 +172,68 @@ test-e2e:
 | service | real repositories on a per-test Postgres; fakes only for clients and broadcasters, through the interfaces the service declares (ARC-005) |
 | controller | `httptest.NewRecorder` through the real router and the real service: status codes, payload validation, permission denials |
 | the whole application | the end-to-end suite (TST-011) |
+
+### TST-013 Tests outside the end-to-end suite are hermetic
+
+- **Severity:** must
+- **Principle:** P8, P9
+- **Check:** a test without the `e2e` build tag that connects to anything other than a server it started itself (an `httptest` server, its own embedded Postgres); that depends on a service it did not start (a shared database from `DATABASE_URL`, Docker Compose, a staging API); that reads files outside its module other than `t.TempDir()`; or that relies on state another test or an earlier run left behind.
+
+`go test` caches a passing package and replays the result until the compiled test binary, an environment variable it read or a module file it opened changes (TST-014). Everything else is invisible to the cache: a test against a shared database stays green in the cache after the database changed. Hermetic tests are also the only ones that give the same result on every laptop and every runner. Whatever needs a running system belongs in the end-to-end suite.
+
+```go
+// bad: a database the test does not own and the cache cannot see
+pool, err := pgxpool.New(t.Context(), os.Getenv("DATABASE_URL"))
+
+// good: a database the test starts, migrates and drops (TST-002)
+pool := testdatabase.New(t)
+```
+
+### TST-014 Let the test cache skip unchanged packages
+
+- **Severity:** should
+- **Principle:** P8
+- **Check:** `-count=1` or another flag that disables caching in the default `just test` recipe or the CI unit test step; CI that does not carry the Go build cache from one run to the next; no scheduled full run (`just test-all`).
+
+`go test` already runs only what changed. It caches each passing package keyed on its compiled test binary and reruns it only when something linked into that binary changes: a change in `internal/service/billing` reruns the tests of billing and of every package that links it, nothing else. That is more precise than selecting packages from a git diff: the key sees through dead code and includes embedded files, `go.mod` and the environment variables the tests read. `-race`, `-coverprofile`, `-json`, `-run`, `-short` and `-v` keep the cache on, and coverage is replayed from it, so the coverage gate (TST-010) still sees every package. `-count=1` turns it off and runs everything, every time.
+
+The cache is only sound for hermetic tests (TST-013). A flaky test that passed once stays cached until its package changes, so a scheduled full run (`just test-all`: uncached, `-shuffle=on` for TST-005) runs nightly on main and before every release. In CI the govengers reusable workflow restores the build cache of the newest main run and saves it on every push to main; pull requests only restore it.
+
+```just
+# Changed and affected packages; the test cache replays the rest
+test *flags:
+    mkdir -p sandbox
+    go test -race -coverprofile=sandbox/unit.cover {{flags}} ./...
+
+# Every package, uncached and shuffled: nightly and before a release
+test-all: (test "-count=1" "-shuffle=on")
+```
+
+### TST-015 Skip the end-to-end suite only when what it runs is unchanged
+
+- **Severity:** should
+- **Principle:** P8, P9
+- **Check:** CI that runs the end-to-end suite although neither the binary, the suite nor their inputs changed; a skip decided by changed paths or a git diff instead of the built artifacts; a skip key without the suite's non-Go inputs (compose files, fixtures, Playwright specs); a scheduled or release run that honors the skip.
+
+The suite tests the whole artifact, so it cannot be scoped by package. The artifact itself says whether anything changed: built with `-trimpath -buildvcs=false` and a fixed version, the binary and the compiled suite are byte-identical for identical code, differ for every change that reaches them, and stay identical when only code they do not link changes (another `cmd`, a tool, docs). Their hash plus the suite's other inputs is the key; a green run records it, and a run whose key is recorded skips. Path filters are the wrong tool: they cannot tell whether a changed file reaches the binary, so they run the suite for changes it never sees or miss inputs nobody listed.
+
+```just
+e2e_inputs := "test/e2e"
+
+# Reproducible server and suite binaries: their hash says whether the suite has anything new to test
+e2e-build:
+    mkdir -p sandbox/e2e-build
+    go build -cover -trimpath -buildvcs=false -ldflags "-X main.version=e2e" -o sandbox/e2e-build/server ./cmd/server
+    go test -c -tags e2e -trimpath -buildvcs=false -o sandbox/e2e-build/ ./test/e2e/...
+
+# The suite, skipped when binary, suite and inputs equal a green run
+test-e2e: e2e-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    key=$(find sandbox/e2e-build {{e2e_inputs}} -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | cut -c1-32)
+    if [ -e "sandbox/e2e-passed/$key" ]; then echo "e2e skipped: equal to the green run $key"; exit 0; fi
+    "{{just_executable()}}" test-e2e-all
+    mkdir -p sandbox/e2e-passed && touch "sandbox/e2e-passed/$key"
+```
+
+CI carries `sandbox/e2e-passed` from run to run; the nightly run calls `just test-e2e-all`, which never skips. The full recipes are in [templates/](../../templates/).

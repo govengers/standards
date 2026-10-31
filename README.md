@@ -5,6 +5,7 @@ How we write Go in the govengers org, and the source of truth a review agent mea
 - [MANIFESTO.md](MANIFESTO.md) - what we believe (principles `P1`-`P10`). Every rule traces back to one.
 - [rules/](rules/) - what gets checked. Each rule has a stable ID, a severity and a check.
 - [playbooks/](playbooks/) - step-by-step guides. Guidance, not graded.
+- [templates/](templates/) - justfile, Dockerfile, CI workflow and Dependabot config to start a service or library from; checked by CI.
 - [AGENTS.md](AGENTS.md) - what a coding agent reads before writing Go, by task.
 - [REVIEW.md](REVIEW.md) - how a review agent applies the rules.
 - [skills/govengers-review/](skills/govengers-review/SKILL.md) - Claude Code skill that runs REVIEW.md with parallel review agents. Install: `ln -s "$PWD/skills/govengers-review" ~/.claude/skills/govengers-review`.
@@ -40,7 +41,7 @@ exceptions:             # deliberate deviations, each with a reason
 | [design.md](rules/core/design.md) | `DES` | options pattern, no init, no globals, interfaces, encapsulation |
 | [concurrency.md](rules/core/concurrency.md) | `CON` | goroutines, context, shared state, channels |
 | [resilience.md](rules/core/resilience.md) | `RES` | timeouts, retries, idempotency for outbound calls |
-| [testing.md](rules/core/testing.md) | `TST` | what to test per layer, coverage, end-to-end suites, tools |
+| [testing.md](rules/core/testing.md) | `TST` | what to test per layer, hermetic tests, the test cache, coverage, end-to-end suites and when to skip them |
 | [toolchain.md](rules/core/toolchain.md) | `TCH` | Go version, modules, tools, lint, justfile |
 
 ### library - reusable modules

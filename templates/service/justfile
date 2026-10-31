@@ -1,0 +1,92 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# Template for a govengers service (govengers/standards templates/service). Replace "example" with the service name.
+# Tools are pinned in go.mod (TCH-002): go get -tool gotest.tools/gotestsum@v1.13.0 golang.org/x/vuln/cmd/govulncheck@v1.9.0 github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+
+image := "ghcr.io/govengers/example"
+version := `git describe --tags --always --dirty 2>/dev/null || echo dev`
+gotestsum := "go tool gotestsum"
+coverage_threshold := "80"
+coverage_excluded := "/cmd/|/internal/repository/internal/sqlc/|/internal/testdatabase/|/test/"
+e2e_inputs := "test/e2e"
+admin_url := env("DATABASE_ADMIN_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+check_url := env("SQLC_CHECK_URL", "postgres://postgres:postgres@localhost:5432/sqlc_check?sslmode=disable")
+
+default:
+    @just --list
+
+# Regenerate the sqlc code; CI fails on a diff (TCH-003)
+generate:
+    go tool sqlc generate
+
+# Vet and lint with the govengers baseline (.golangci.yml, copied from govengers/standards)
+lint:
+    go vet ./...
+    go vet -tags e2e ./test/e2e/...
+    golangci-lint run ./...
+
+# Migrations and queries, offline: squawk, sqlc generate, build (DAT-006, DAT-016)
+db-lint:
+    bunx squawk-cli@2.66.0 --pg-version 18 --assume-in-transaction internal/database/migrations/*.sql
+    go tool sqlc generate
+    go build ./...
+
+# Migrations on a scratch database, then sqlc vet; needs a Postgres at DATABASE_ADMIN_URL (DAT-016)
+db-check: db-lint
+    psql "{{admin_url}}" -qc 'DROP DATABASE IF EXISTS sqlc_check' -c 'CREATE DATABASE sqlc_check'
+    DATABASE_URL="{{check_url}}" go run ./cmd/migrate
+    SQLC_DATABASE_URL="{{check_url}}" go tool sqlc vet
+    go test ./internal/database/... ./internal/repository/...
+
+# Unit tests of changed and affected packages; the Go test cache replays the rest (TST-014). Fails below the coverage threshold (TST-010)
+test *flags:
+    mkdir -p sandbox
+    {{gotestsum}} --format testname --jsonfile sandbox/unit.json -- -race -coverprofile=sandbox/unit.raw.cover {{flags}} ./...
+    grep -v -E '{{coverage_excluded}}' sandbox/unit.raw.cover > sandbox/unit.cover
+    go tool cover -func=sandbox/unit.cover > sandbox/unit.func
+    awk -v threshold={{coverage_threshold}} '/^total:/ { found = 1; sub("%", "", $3); print "coverage " $3 "%"; if ($3 + 0 < threshold) { print "coverage is below " threshold "%"; exit 1 } } END { if (!found) { print "no coverage total"; exit 1 } }' sandbox/unit.func
+
+# Every unit test, uncached and shuffled: the nightly run and before a release (TST-014, TST-005)
+test-all: (test "-count=1" "-shuffle=on")
+
+# Reproducible, coverage-instrumented server and compiled suite: their hash says whether the suite has anything new to test (TST-015)
+e2e-build:
+    mkdir -p sandbox/e2e-build
+    go build -cover -trimpath -buildvcs=false -ldflags "-X main.version=e2e" -o sandbox/e2e-build/server ./cmd/server
+    go test -c -tags e2e -trimpath -buildvcs=false -o sandbox/e2e-build/ ./test/e2e/...
+
+# The end-to-end suite against the built server, always (TST-011)
+test-e2e-all: e2e-build
+    rm -rf sandbox/coverage && mkdir -p sandbox/coverage
+    E2E_BINARY={{justfile_directory()}}/sandbox/e2e-build/server GOCOVERDIR={{justfile_directory()}}/sandbox/coverage {{gotestsum}} --format testname --jsonfile sandbox/e2e.json -- -tags e2e -trimpath -buildvcs=false -count=1 ./test/e2e/...
+    go tool covdata percent -i=sandbox/coverage
+
+# The end-to-end suite, skipped when server, suite and inputs equal a green run (TST-015); keeps sandbox/e2e.json for CI badges
+test-e2e: e2e-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    key=$(find sandbox/e2e-build {{e2e_inputs}} -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | cut -c1-32)
+    passed="sandbox/e2e-passed/$key"
+    if [ -f "$passed/e2e.json" ]; then
+        echo "e2e skipped: server, suite and inputs equal the green run $key"
+        cp "$passed/e2e.json" sandbox/e2e.json
+        exit 0
+    fi
+    "{{just_executable()}}" test-e2e-all
+    mkdir -p "$passed"
+    cp sandbox/e2e.json "$passed/e2e.json"
+
+# Scan for known vulnerabilities in reachable code (TCH-008)
+vulncheck:
+    go tool govulncheck ./...
+
+# Build the server with the version from git (DEP-005)
+build:
+    go build -trimpath -ldflags "-s -w -X main.version={{version}}" -o sandbox/server ./cmd/server
+
+# Build the image like CI does (DEP-002)
+docker-build:
+    docker build -f docker/server.Dockerfile --build-arg VERSION={{version}} -t {{image}}:{{version}} .
+
+# Everything CI runs on a change; db-check needs a Postgres and runs on its own
+check: lint db-lint test test-e2e vulncheck

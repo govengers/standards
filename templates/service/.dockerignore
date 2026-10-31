@@ -1,0 +1,7 @@
+# Only what the Dockerfile copies matters; keep the context small and free of local output.
+.git
+.github
+sandbox
+test
+**/node_modules
+ui/dist

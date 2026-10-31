@@ -43,6 +43,7 @@ return fmt.Errorf("load user %s: %w", id, err)
 - **Lint-detectable** (unchecked errors, formatting, shadowing, unused code): add a linter to [.golangci.yml](.golangci.yml), not a rule.
 - **Judgment the linter cannot make**: a rule here.
 - **How-to sequences** (adding an entity end to end): a playbook in [playbooks/](playbooks/). Playbooks are not graded and must not contradict the rules.
+- **Files a new repo starts from** (justfile, Dockerfile, CI workflow): [templates/](templates/). Templates follow every rule; when a rule changes, update them with it.
 
 ## Adding findings from a review or another session
 
