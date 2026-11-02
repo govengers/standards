@@ -120,7 +120,7 @@ The namespace is the service name, the subsystem the component (`http`, `db`, `q
 
 - **Severity:** should
 - **Principle:** P6, P7
-- **Check:** a client package (ARC-005) without a call counter by outcome and a duration histogram; no database pool metrics; a job queue (JOB) without pending, running, failed and duration metrics.
+- **Check:** a client package (ARC-005) without a call counter by outcome and a duration histogram; no database pool metrics; a govengers/jobs worker without the `prometheusadapter` Observer and depth source (JOB-010).
 
 When a dependency slows down, its own duration histogram shows it before the request latency does. Clients and the job runner receive the `Registerer` through their options like everything else (MET-002). Export pool statistics with a collector that reads `pgxpool.Pool.Stat()` at scrape time instead of updating gauges on every acquire.
 

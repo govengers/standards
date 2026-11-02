@@ -138,7 +138,7 @@ default:
 - **Principle:** P3, P6
 - **Check:** long-running goroutines (pollers, tickers, consumers) that do not exit on `ctx.Done()` or a stop channel, or that are not waited for during shutdown.
 
-Use `errgroup.WithContext` or a `sync.WaitGroup` owned by the component that starts them, and cancel on shutdown. `time.Ticker` instead of a scheduler library for a fixed interval.
+Use `errgroup.WithContext` or a `sync.WaitGroup` owned by the component that starts them, and cancel on shutdown. `time.Ticker` instead of a scheduler library for a fixed interval inside one process. Work that must run once per period across replicas is a `jobs.Schedule` ([JOB-009](../service/jobs.md#job-009-recurring-work-runs-as-a-jobsschedule)), not a ticker per replica.
 
 ```go
 func (h *Hub) Run(ctx context.Context) error {

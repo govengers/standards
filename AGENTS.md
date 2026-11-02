@@ -15,7 +15,7 @@ This repo is the govengers Go standards: principles in `MANIFESTO.md`, graded ru
 | new business object, endpoint or business action | `playbooks/business-object-lifecycle.md`, `rules/service/api.md`, `rules/service/auth.md`, `rules/service/logging.md`, `rules/service/metrics.md`, `rules/service/realtime.md`, `rules/service/data-integrity.md` |
 | query, migration, transaction | `rules/service/data-access.md`, `rules/service/data-integrity.md` |
 | configuration value | `rules/service/configuration.md` |
-| goroutine, worker, background job | `rules/core/concurrency.md`, `rules/service/jobs.md` |
+| goroutine, worker, background job, recurring work | `rules/core/concurrency.md`, `rules/service/jobs.md` (govengers/jobs) |
 | call to another system | `rules/core/resilience.md`, ARC-005 |
 | logging, error recording | `rules/service/logging.md` |
 | metrics | `rules/service/metrics.md` |
