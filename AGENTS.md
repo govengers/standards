@@ -18,8 +18,9 @@ This repo is the govengers Go standards: principles in `MANIFESTO.md`, graded ru
 | goroutine, worker, background job, recurring work | `rules/core/concurrency.md`, `rules/service/jobs.md` (govengers/jobs) |
 | call to another system | `rules/core/resilience.md`, ARC-005 |
 | logging, error recording | `rules/service/logging.md` |
-| metrics | `rules/service/metrics.md` |
-| tracing, version reporting, profiling | `rules/service/observability.md` |
+| metrics | `rules/service/metrics.md` (govengers/telemetry) |
+| tracing | `rules/service/tracing.md` (govengers/telemetry/tracing) |
+| version reporting, profiling | `rules/service/observability.md` |
 | WebSocket, broadcasts | `rules/service/realtime.md` |
 | tests | `rules/core/testing.md` |
 | startup, shutdown, Dockerfile, CI | `rules/service/layout.md`, `rules/service/deployment.md`, `rules/core/toolchain.md`; start from `templates/` |

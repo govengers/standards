@@ -182,6 +182,17 @@ if err != nil {
 }
 ```
 
+A service that traces (TRC-001) adds `oteladapter`: the propagator on the store and the worker carries the enqueuing request's trace into the job, and the middleware, placed after `wideeventadapter`, opens one span per attempt and writes `trace.id` onto the attempt's event (TRC-003, TRC-005).
+
+```go
+jobSpans, err := oteladapter.NewMiddleware(&oteladapter.Options{TracerProvider: traces.TracerProvider()})
+if err != nil {
+    return fmt.Errorf("create job spans: %w", err)
+}
+// postgresadapter.Options.Propagators and jobs.WorkerOptions.Propagators: oteladapter.NewPropagator()
+// jobs.WorkerOptions.Middleware: []jobs.Middleware{jobEvents, jobSpans}
+```
+
 ### JOB-011 A job a user started acts as that user
 
 - **Severity:** should

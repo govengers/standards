@@ -1,6 +1,6 @@
 # Metrics (`MET`)
 
-Profile: service. Library: `github.com/prometheus/client_golang`.
+Profile: service. Libraries: `github.com/prometheus/client_golang`, and `github.com/govengers/telemetry` for the registry, the `/metrics` server and the request middleware.
 
 Metrics and wide events answer different questions. Metrics are cheap aggregates for dashboards and alerts: how many requests, how many failed, how slow, how full. The wide event (LOG) holds the detail of one unit of work. A service without request metrics cannot say its own error rate or p95 latency, and every alert has to be built on log queries instead.
 
@@ -10,13 +10,12 @@ Metrics and wide events answer different questions. Metrics are cheap aggregates
 - **Principle:** P6
 - **Check:** a `/metrics` route on the public router or the public port; metrics served from `http.DefaultServeMux`; a metrics server without timeouts (LAY-006) or without shutdown (LAY-003).
 
-Metrics reveal route names, dependency names, error rates and traffic patterns, and scraping costs CPU. Serve them from their own `http.Server` on a separate port (`:9090`) that the Service exposes to Prometheus and the Ingress never routes. Unlike profiling (OBS-003), the listener binds to all interfaces, because Prometheus scrapes it from inside the cluster.
+Metrics reveal route names, dependency names, error rates and traffic patterns, and scraping costs CPU. Serve them from their own `http.Server` on a separate port (`:9090`) that the Service exposes to Prometheus and the Ingress never routes. Unlike profiling (OBS-003), the listener binds to all interfaces, because Prometheus scrapes it from inside the cluster. `telemetry.NewMetricsServer` builds that server: only `GET /metrics`, every timeout set; main runs it next to the API server and shuts it down in the drain.
 
 ```go
-metricsServer := &http.Server{
-    Addr:              ":9090",
-    Handler:           promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{Registry: metricsRegistry}),
-    ReadHeaderTimeout: 5 * time.Second,
+metricsServer, err := telemetry.NewMetricsServer(&telemetry.MetricsServerOptions{Registry: metricsRegistry}) // :9090
+if err != nil {
+    return err
 }
 ```
 
@@ -26,20 +25,15 @@ metricsServer := &http.Server{
 - **Principle:** P3, P9
 - **Check:** `prometheus.MustRegister`, `prometheus.DefaultRegisterer` or `promauto` without `promauto.With(registerer)` in application code; metric variables at package level; a component that creates its own registry instead of receiving a `prometheus.Registerer` through its options.
 
-The default registry is global state (DES-003): tests that build a component twice panic with "duplicate metrics collector registration", and what a binary exports depends on which packages it imports. `main` builds one registry, registers the runtime collectors explicitly and hands a `prometheus.Registerer` to every component that has metrics (DES-001). Each component creates its collectors in its constructor and returns the registration error.
+The default registry is global state (DES-003): tests that build a component twice panic with "duplicate metrics collector registration", and what a binary exports depends on which packages it imports. `main` builds one registry with the runtime collectors (`telemetry.NewRegistry`: Go, process, build info) and hands it as the `prometheus.Registerer` to every component that has metrics (DES-001). Each component creates its collectors in its constructor and returns the registration error.
 
 ```go
 // bad
 var requestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{Name: "requests_total"}, []string{"route"})
 
 // good, in main
-metricsRegistry := prometheus.NewRegistry()
-metricsRegistry.MustRegister(
-    collectors.NewGoCollector(),
-    collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-    collectors.NewBuildInfoCollector(),
-)
-httpMetrics, err := server.NewHTTPMetrics(&server.HTTPMetricsOptions{Namespace: "billing", Registerer: metricsRegistry})
+metricsRegistry := telemetry.NewRegistry()
+checkoutService, err := service.NewCheckoutService(&service.CheckoutServiceOptions{Registerer: metricsRegistry, ...})
 ```
 
 `MustRegister` is fine in `main`, where a duplicate is a startup programming error (ERR-001).
@@ -48,42 +42,23 @@ httpMetrics, err := server.NewHTTPMetrics(&server.HTTPMetricsOptions{Namespace: 
 
 - **Severity:** must
 - **Principle:** P7
-- **Check:** a service without a request counter labeled by route template, method and status, a request duration histogram and an in-flight gauge; HTTP routes not covered by the middleware.
+- **Check:** a service without a request counter labeled by route template, method and status, a request duration histogram and an in-flight gauge; HTTP routes not covered by the middleware; a hand-written copy of the request middleware instead of `telemetry/ginadapter`.
 
-These three answer the first questions of every incident: is traffic normal, what fails, what is slow. Record them once, in a middleware (or interceptor for RPC), so no handler can forget them.
+These three answer the first questions of every incident: is traffic normal, what fails, what is slow. Record them once, in a middleware (or interceptor for RPC), so no handler can forget them. `ginadapter.NewMetricsMiddleware` records `<namespace>_http_requests_total{route,method,status}`, `<namespace>_http_request_duration_seconds{route,method}` and `<namespace>_http_requests_in_flight`, under the route template (`unmatched` when no route matched), with the method bounded by `telemetry.MethodLabel` (MET-004) and a panic counted as 500.
 
 ```go
-// Middleware records every request under its route template, never under the raw path.
-func (m *HTTPMetrics) Middleware() gin.HandlerFunc {
-    return func(ginContext *gin.Context) {
-        start := time.Now()
-        m.inFlight.Inc()
-        defer m.inFlight.Dec()
-
-        ginContext.Next()
-
-        route := ginContext.FullPath() // "/api/v1/products/:id"; empty when no route matched
-        if route == "" {
-            route = "unmatched"
-        }
-        method := methodLabel(ginContext.Request.Method)
-        m.requests.WithLabelValues(route, method, strconv.Itoa(ginContext.Writer.Status())).Inc()
-        m.durations.WithLabelValues(route, method).Observe(time.Since(start).Seconds())
-    }
+requestMetrics, err := ginadapter.NewMetricsMiddleware(&ginadapter.MetricsOptions{
+    Registerer: metricsRegistry,
+    Namespace:  "billing",
+    SkipRoutes: []string{"/api/health"}, // like LOG-010
+})
+if err != nil {
+    return err
 }
-
-// methodLabel bounds the method label to the methods the API serves (MET-004).
-func methodLabel(method string) string {
-    switch method {
-    case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodHead, http.MethodOptions:
-        return method
-    default:
-        return "other"
-    }
-}
+engine.Use(recovery, otelgin.Middleware("billing"), wideEvents, requestMetrics)
 ```
 
-Pick histogram buckets around the latency objective (`prometheus.DefBuckets` covers 5 ms to 10 s). Exclude `/api/health` like LOG-010 does.
+Pick histogram buckets around the latency objective with `Buckets` (the default, `prometheus.DefBuckets`, covers 5 ms to 10 s).
 
 ### MET-004 Keep label values to small, closed sets
 
@@ -98,7 +73,7 @@ Every distinct label combination is a time series that Prometheus keeps in memor
 m.requests.WithLabelValues(ginContext.Request.URL.Path, productID.String()).Inc()
 
 // good
-m.requests.WithLabelValues(ginContext.FullPath(), methodLabel(ginContext.Request.Method), strconv.Itoa(status)).Inc()
+m.requests.WithLabelValues(ginContext.FullPath(), telemetry.MethodLabel(ginContext.Request.Method), strconv.Itoa(status)).Inc()
 ```
 
 ### MET-005 Follow the Prometheus naming conventions

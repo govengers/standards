@@ -134,3 +134,23 @@ type Options struct {
     Registerer prometheus.Registerer // optional; nil exports no metrics
 }
 ```
+
+### LIB-012 Report outcomes through an Observer; adapter subpackages translate them
+
+- **Severity:** should
+- **Principle:** P2, P3
+- **Check:** a core package that imports `client_golang`, OpenTelemetry or wide-event-logger to report what it did; a library that reports its work only through a logger option, so a caller cannot count or trace it; an adapter for one of these systems that lives in the core package.
+
+The core declares what happened as data (an `Outcome`, an `Operation`) and hands it to an `Observer` the caller passes in through the options; a nil Observer reports nothing. Subpackages named after the system turn it into that system's form: `prometheusadapter` (collectors on the caller's `Registerer`, LIB-011), `wideeventadapter` (fields on the unit of work's event), `oteladapter` (spans and propagation). The core then needs none of these dependencies, a consumer imports only the adapters it uses, and module graph pruning keeps the others out of its build (LIB-007). `govengers/auth`, `govengers/jobs` and `govengers/livewire` are the reference.
+
+```go
+// core: what happened, no metrics library
+type Observer interface {
+    AttemptFinished(outcome *Outcome)
+}
+
+// prometheusadapter: the translation
+func (m *Metrics) AttemptFinished(outcome *jobs.Outcome) {
+    m.attempts.WithLabelValues(outcome.Claim.Queue, outcome.Claim.Kind, string(outcome.Result)).Inc()
+}
+```

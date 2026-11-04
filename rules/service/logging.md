@@ -112,6 +112,7 @@ Each layer adds fields under its own namespace. Nothing is too small to record i
 | `storage` | `bucket`, `key`, `bytes`, `duration_ms` |
 | `ws` | `recipients`, `dropped` |
 | `email` | `template`, `provider_id` |
+| `trace` | `id`, `span_id` (TRC-005, written by `telemetry/tracing.RecordTraceID` and `jobs/oteladapter`) |
 
 ```go
 start := time.Now()

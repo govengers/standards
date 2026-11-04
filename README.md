@@ -62,8 +62,9 @@ exceptions:             # deliberate deviations, each with a reason
 | [auth.md](rules/service/auth.md) | `AUTH` | authentication, composable authorization |
 | [realtime.md](rules/service/realtime.md) | `RT` | WebSocket events and broadcasting |
 | [logging.md](rules/service/logging.md) | `LOG` | wide events: every failure and every interaction, on every layer |
-| [metrics.md](rules/service/metrics.md) | `MET` | Prometheus: internal `/metrics`, own registry, request rate/errors/duration, label cardinality |
-| [observability.md](rules/service/observability.md) | `OBS` | tracing, version reporting, profiling endpoints |
+| [metrics.md](rules/service/metrics.md) | `MET` | Prometheus with govengers/telemetry: internal `/metrics`, own registry, request rate/errors/duration, label cardinality |
+| [tracing.md](rules/service/tracing.md) | `TRC` | OpenTelemetry for traces only: `OTEL_*` config, W3C propagation, tail sampling, trace ID on the wide event, no secrets in spans |
+| [observability.md](rules/service/observability.md) | `OBS` | version reporting, profiling endpoints |
 | [data-integrity.md](rules/service/data-integrity.md) | `INT` | audit log, soft delete, seeding, external state |
 | [jobs.md](rules/service/jobs.md) | `JOB` | background jobs and schedules with govengers/jobs |
 | [deployment.md](rules/service/deployment.md) | `DEP` | Docker build, single binary, runtime image |
@@ -81,7 +82,7 @@ exceptions:             # deliberate deviations, each with a reason
 | Logging | `govengers/wide-event-logger` (wide events); zerolog only for startup and shutdown lines |
 | Caching | `govengers/cache` |
 | Real-time | WebSocket (gorilla) |
-| Metrics | Prometheus (`client_golang`), own registry, `/metrics` on an internal port |
-| Tracing | OpenTelemetry |
+| Metrics | Prometheus (`client_golang`) through `github.com/govengers/telemetry`, own registry, `/metrics` on an internal port |
+| Tracing | OpenTelemetry, traces only, through `github.com/govengers/telemetry/tracing` |
 | Tasks | justfile |
 | Deploy | multi-stage Docker, single binary with embedded frontend, distroless runtime |
