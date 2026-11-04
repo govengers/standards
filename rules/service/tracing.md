@@ -69,9 +69,9 @@ A head sampler decides before the request ran, so it drops the slow and failing 
 
 - **Severity:** should
 - **Principle:** P7
-- **Check:** a traced service whose wide-event middleware has no pre-enricher calling `tracing.RecordTraceID`; `otelgin.Middleware` mounted after the wide-event middleware; a job worker that traces without `oteladapter.NewMiddleware` after `wideeventadapter`; the trace ID under another key.
+- **Check:** a traced service whose wide-event middleware has no pre-enricher calling `tracing.RecordTraceID`; `otelgin.Middleware` mounted after the wide-event middleware or inside the recovery middleware; a job worker that traces without `oteladapter.NewMiddleware` after `wideeventadapter`; the trace ID under another key.
 
-The keys are `trace.id` and `trace.span_id` (LOG-004, LOG-005), in every service and in jobs, so one log query finds the event of any trace. The span must exist when the event begins: `otelgin` runs first.
+The keys are `trace.id` and `trace.span_id` (LOG-004, LOG-005), in every service and in jobs, so one log query finds the event of any trace. The span must exist when the event begins, so `otelgin` runs before the wide-event middleware; and it runs outside the recovery, because `otelgin` does not recover: inside it, a panicking request's span ends before the recovery writes the 500 and shows no error.
 
 ```go
 wideEvents, err := wideeventginadapter.NewMiddleware(&wideeventginadapter.Options{
@@ -80,7 +80,7 @@ wideEvents, err := wideeventginadapter.NewMiddleware(&wideeventginadapter.Option
         tracing.RecordTraceID(ginContext.Request.Context(), we)
     },
 })
-engine.Use(recovery, otelgin.Middleware("billing"), wideEvents, requestMetrics)
+engine.Use(otelgin.Middleware("billing"), recovery, wideEvents, requestMetrics)
 ```
 
 With the propagator installed and no collector, an incoming `traceparent` still reaches the event: the request's logs carry the caller's trace ID.
@@ -124,7 +124,7 @@ poolConfig.ConnConfig.Tracer = otelpgx.NewTracer()
 
 - **Severity:** should
 - **Principle:** P2
-- **Check:** an OpenTelemetry `MeterProvider` or `LoggerProvider` built or installed (`sdk/metric`, `sdk/log`, `otel.SetMeterProvider`, `global.SetLoggerProvider`); `redisotel.InstrumentMetrics`; the OpenTelemetry Prometheus exporter or an `otelslog` bridge; a `go.opentelemetry.io/otel/log` dependency.
+- **Check:** an OpenTelemetry `MeterProvider` or `LoggerProvider` built or installed (`sdk/metric`, `sdk/log`, `otel.SetMeterProvider`, `global.SetLoggerProvider`); `redisotel.InstrumentMetrics`; the OpenTelemetry Prometheus exporter or an `otelslog` bridge; an import of `go.opentelemetry.io/otel/log`. An `// indirect` requirement the SDK or an exporter pulls in is no finding.
 
 Prometheus already owns the metrics (MET), with its own registry, tests and alerts; OpenTelemetry metrics need a collector in every deployment and never reach that registry. Wide events already own the logs. The OpenTelemetry log modules are still on a v0 line that breaks between minors. Without a `MeterProvider` the contrib instrumentations record no metrics, which is what we want. For Redis pool metrics use `redisprometheus.NewCollector` on the service's registry.
 
