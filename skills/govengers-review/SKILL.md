@@ -94,7 +94,7 @@ Buckets, by topic. Spawn every bucket of the profile in **one message** so they 
 | library | `library/library.md` | library |
 | architecture | `service/architecture.md`, `service/layout.md`, `service/configuration.md`, `service/api.md`, `service/auth.md`, `service/deployment.md` | service |
 | data | `service/data-access.md`, `service/data-integrity.md`, `service/jobs.md` | service |
-| observability | `service/logging.md`, `service/metrics.md`, `service/observability.md`, `service/realtime.md` | service |
+| observability | `service/logging.md`, `service/metrics.md`, `service/tracing.md`, `service/observability.md`, `service/realtime.md` | service |
 
 Then list `$STANDARDS/rules/core/*.md` and `$STANDARDS/rules/<profile>/*.md`: every file must be
 in exactly one bucket. A file the table does not know (a newer standards version) joins the bucket

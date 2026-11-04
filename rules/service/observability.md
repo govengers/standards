@@ -1,14 +1,10 @@
 # Observability (`OBS`)
 
-Profile: service. Logging and metrics have their own files: [logging.md](logging.md), [metrics.md](metrics.md).
+Profile: service. Logging, metrics and tracing have their own files: [logging.md](logging.md), [metrics.md](metrics.md), [tracing.md](tracing.md).
 
 ### OBS-001 Trace across service boundaries with OpenTelemetry
 
-- **Severity:** should
-- **Principle:** P7
-- **Check:** a service calling other services or Postgres without OpenTelemetry instrumentation; tracer provider not shut down on exit.
-
-Initialize the tracer in bootstrap (LAY-002), instrument the pgx pool (`otelpgx`), Gin and outbound HTTP clients, and `defer tp.Shutdown(ctx)`. Put the trace ID on the wide event so a log line leads to its trace.
+- **Status:** deprecated (04.11.2026, replaced by the TRC rules in [tracing.md](tracing.md): TRC-001 when to trace, TRC-007 the instrumentations, TRC-009 the flush, TRC-005 the trace ID on the wide event)
 
 ### OBS-002 Know which version is running
 
