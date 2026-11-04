@@ -55,7 +55,7 @@ requestMetrics, err := ginadapter.NewMetricsMiddleware(&ginadapter.MetricsOption
 if err != nil {
     return err
 }
-engine.Use(recovery, otelgin.Middleware("billing"), wideEvents, requestMetrics)
+engine.Use(otelgin.Middleware("billing"), recovery, wideEvents, requestMetrics) // order: TRC-005
 ```
 
 Pick histogram buckets around the latency objective with `Buckets` (the default, `prometheus.DefBuckets`, covers 5 ms to 10 s).
