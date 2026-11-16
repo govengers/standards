@@ -36,12 +36,12 @@ HasOIDCGroup(group)
 HasGitHubTeam(team)
 HasPermission(resource, access) // API key scopes such as builds:write
 
-if !authorization.Any(authorization.IsAdmin(), authorization.HasUserID(id)).Check(ctx) {
-    return nil, model.ErrPermissionDenied // the controller answers 403 (API-002)
+if err := authorization.Any(authorization.IsAdmin(), authorization.HasUserID(id))(ctx); err != nil {
+    return nil, err // a refusal is an *auth.Error: the controller answers 401 or 403 (API-002)
 }
 ```
 
-These are `govengers/auth/authorization`'s checks, combined with `All`, `Any` and `Not`. High-level checkers include the authentication and active checks, so a deactivated admin is not an admin.
+These are `govengers/auth/authorization`'s checks, combined with `All`, `Any` and `Not`. A check is a function of the context: `nil` allows, an error refuses. Return the refusal unchanged; `auth.ResponseFor` (and livewire, which uses it) answers `auth.ErrUnauthenticated` with 401, `auth.ErrForbidden` with 403 and a wiring mistake (a nil check, `Any` without checks) with 500, so it fails closed. High-level checkers include the authentication and active checks, so a deactivated admin is not an admin.
 
 ### AUTH-004 Checkers take `context.Context`, not `*gin.Context`
 

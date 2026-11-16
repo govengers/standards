@@ -34,6 +34,9 @@ func respondError(ginContext *gin.Context, err error) {
 
 func errorResponse(err error) (int, ErrorResponse) {
     switch {
+    case errors.Is(err, auth.ErrUnauthenticated), errors.Is(err, auth.ErrForbidden):
+        status, response := auth.ResponseFor(err) // refusals of govengers/auth/authorization (AUTH-003)
+        return status, ErrorResponse{Code: response.Code, Message: response.Message}
     case errors.Is(err, model.ErrNotFound):
         return http.StatusNotFound, ErrorResponse{Code: "not_found", Message: "not found"}
     case errors.Is(err, model.ErrConflict):

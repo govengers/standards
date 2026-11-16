@@ -247,8 +247,8 @@ func (c *ProductController) RegisterRoutes(router gin.IRouter) {
 func (c *ProductController) createProductHandler() gin.HandlerFunc {
     return func(ginContext *gin.Context) {
         ctx := ginContext.Request.Context()
-        if !authorization.IsAdmin().Check(ctx) {
-            respondError(ginContext, model.ErrPermissionDenied)
+        if err := authorization.IsAdmin()(ctx); err != nil {
+            respondError(ginContext, err) // 401 or 403 (AUTH-003, API-002)
             return
         }
         var payload CreateProductPayload

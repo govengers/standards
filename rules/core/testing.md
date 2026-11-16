@@ -43,10 +43,10 @@ Authorization bugs are silent: nothing fails, the wrong person just sees the dat
 
 ```go
 func TestIsAdmin(t *testing.T) {
-    ctx := t.Context()
-    require.True(t, authorization.IsAdmin().Check(actor.With(ctx, &model.User{Role: model.RoleAdmin, Active: true})))
-    require.False(t, authorization.IsAdmin().Check(actor.With(ctx, &model.User{Role: model.RoleUser, Active: true})))
-    require.False(t, authorization.IsAdmin().Check(actor.With(ctx, &model.User{Role: model.RoleAdmin, Active: false})))
+    as := func(identity *auth.Identity) context.Context { return auth.WithIdentity(t.Context(), identity) }
+    require.NoError(t, authorization.IsAdmin()(as(&auth.Identity{Roles: []string{auth.RoleAdmin}, Active: true})))
+    require.ErrorIs(t, authorization.IsAdmin()(as(&auth.Identity{Active: true})), auth.ErrForbidden)
+    require.ErrorIs(t, authorization.IsAdmin()(as(&auth.Identity{Roles: []string{auth.RoleAdmin}, Active: false})), auth.ErrForbidden)
 }
 ```
 

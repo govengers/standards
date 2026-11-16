@@ -80,7 +80,7 @@ The derived repository is a new repository with its own history; it does not kee
 
 ## 4. A CI gate derives and builds on every change
 
-`just derive-check` derives a sample application into a stable directory (`sandbox/derive-check`, so its test server and Go test cache are reused between runs) and runs the derived application's gates there: build, vet, lint, unit tests, the frontend's checks and build. CI runs it as an extra recipe of the reusable service workflow (`recipes: '["derive-check", ...]'`), the nightly run with `-count=1 -shuffle=on`.
+`just derive-check` derives a sample application into a stable directory (`sandbox/derive-check`, so its test server and Go test cache are reused between runs) and runs the derived application's gates there: build, vet, lint, unit tests, the frontend's checks and build. CI runs it as an extra recipe of the reusable service workflow (`recipes: '["derive-check", ...]'`). The workflow calls a recipe without arguments and exports `FULL=true` on the nightly and tag runs, so the recipe adds `-count=1 -shuffle=on` itself then (TST-014).
 
 ```just
 derive-check *flags:
@@ -93,7 +93,9 @@ derive-check *flags:
     go build ./...
     go vet ./...
     golangci-lint run ./...
-    go tool postgrestest go test {{flags}} ./... # the template's own test job runs them with the race detector
+    full=""
+    if [ "${FULL:-false}" = true ]; then full="-count=1 -shuffle=on"; fi # the reusable workflow's full run
+    go tool postgrestest go test $full {{flags}} ./... # the template's own test job runs them with the race detector
 ```
 
 The gate is what makes the manifest true: a foundation file that starts to import a domain package, a migration of the foundation that references a domain table, a frontend page of the foundation that links a domain route all fail it in the pull request that adds them. Reference: the first template application measured 13 s for `just derive-check` locally, and the job ran in parallel with the unit tests in CI.

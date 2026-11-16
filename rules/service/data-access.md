@@ -208,7 +208,7 @@ On conflict, `RETURNING` yields no row and `:one` returns `pgx.ErrNoRows`, which
 - **Principle:** P9, P10
 - **Check:** SQLite or another database supported alongside Postgres; Postgres-specific features avoided "for portability".
 
-Dual database support taxes every query and hides prod bugs. Dev and tests use embedded-postgres (`fergusstrange/embedded-postgres`) or a Postgres container on the same major version as production.
+Dual database support taxes every query and hides prod bugs. Dev uses embedded-postgres (`fergusstrange/embedded-postgres`), tests use `github.com/govengers/postgrestest` (TST-016), both on the same major version as production.
 
 ### DAT-016 Run the check chain locally and in CI
 
