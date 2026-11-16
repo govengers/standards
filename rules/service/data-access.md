@@ -214,22 +214,25 @@ Dual database support taxes every query and hides prod bugs. Dev and tests use e
 
 - **Severity:** must
 - **Principle:** P8
-- **Check:** no justfile recipe running squawk, `sqlc generate`, `go build`, migrate-on-scratch-DB, `sqlc vet` and the repository tests; CI that does not fail on a diff in `internal/repository/internal/sqlc` after regeneration.
+- **Check:** no justfile recipe chain (`db-check`, or `check` around it) running squawk, `sqlc generate`, `go build`, migrate-on-scratch-DB, `sqlc vet` and the repository tests; CI that does not fail on a diff in `internal/repository/internal/sqlc` after regeneration.
 
 ```just
+postgrestest := "go tool postgrestest"
+
 # Offline, on every .sql edit.
 db-lint:
     bunx squawk-cli@2.66.0 --pg-version 18 --assume-in-transaction internal/database/migrations/*.sql
     go tool sqlc generate
     go build ./...
 
-# Needs Postgres: fresh scratch database, migrated by the app's own migrator.
+# A throwaway PostgreSQL from the postgrestest launcher, migrated by the app's own migrator, then sqlc vet.
 db-check: db-lint
-    psql "{{admin_url}}" -qc 'DROP DATABASE IF EXISTS sqlc_check' -c 'CREATE DATABASE sqlc_check'
-    DATABASE_URL="{{check_url}}" go run ./cmd/migrate
-    SQLC_DATABASE_URL="{{check_url}}" go tool sqlc vet
-    go test ./internal/database/... ./internal/repository/...
+    env -u POSTGRESTEST_URL {{postgrestest}} bash -c 'DATABASE_URL="$POSTGRESTEST_URL" go run ./cmd/migrate && SQLC_DATABASE_URL="$POSTGRESTEST_URL" go tool sqlc vet'
+
+check: lint generate-check db-check test test-e2e vulncheck
 ```
+
+The repository tests run in `just test` (TST-002, TST-016); CI runs `db-check` as its own job (`recipes` of the reusable service workflow) next to the test job. `env -u` matters: with a long-lived test server in `POSTGRESTEST_URL` the launcher would reuse it and the migrations would land in its maintenance database.
 
 After merging branches that add columns, re-run `sqlc generate` and diff: `go build` passes even when a query predates a new column.
 

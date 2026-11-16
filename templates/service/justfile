@@ -1,23 +1,36 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 # Template for a govengers service (govengers/standards templates/service). Replace "example" with the service name.
-# Tools are pinned in go.mod (TCH-002): go get -tool gotest.tools/gotestsum@v1.13.0 golang.org/x/vuln/cmd/govulncheck@v1.9.0 github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+# Delete what does not apply: the frontend recipes for a service without UI, openapi-check and the clients in generate
+# for a service that ships no API clients.
+# Tools are pinned in go.mod (TCH-002): go get -tool gotest.tools/gotestsum@v1.13.0 golang.org/x/vuln/cmd/govulncheck@v1.9.0
+# github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 github.com/govengers/postgrestest/cmd/postgrestest@v0.1.0 github.com/oasdiff/oasdiff@v1.38.0
 
 image := "ghcr.io/govengers/example"
 version := `git describe --tags --always --dirty 2>/dev/null || echo dev`
 gotestsum := "go tool gotestsum"
+# One PostgreSQL for the whole run, at an address stable per checkout (TST-016, TST-019)
+postgrestest := "go tool postgrestest"
 coverage_threshold := "80"
-coverage_excluded := "/cmd/|/internal/repository/internal/sqlc/|/internal/testdatabase/|/test/"
+coverage_excluded := "/cmd/|/internal/repository/internal/sqlc/|/internal/testdatabase/|/test/|/pkg/"
+# Per-test budget (TST-017)
+test_budget := "5s"
 e2e_inputs := "test/e2e"
-admin_url := env("DATABASE_ADMIN_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
-check_url := env("SQLC_CHECK_URL", "postgres://postgres:postgres@localhost:5432/sqlc_check?sslmode=disable")
+# Generated files, committed; generate-check fails when they differ from what generate writes (TCH-003)
+generated := "internal/repository/internal/sqlc pkg/apiclient pkg/command openapi.yaml ui/src/api"
 
 default:
     @just --list
 
-# Regenerate the sqlc code; CI fails on a diff (TCH-003)
+# Regenerate the sqlc code and the API clients (pkg/apiclient, pkg/command, ui/src/api, openapi.yaml) from the livewire registry
 generate:
     go tool sqlc generate
+    go run ./cmd/generate
+
+# Fail when a generated file is not what generate writes, changed or new (TCH-003, DAT-016)
+generate-check: generate
+    git diff --exit-code -- {{generated}}
+    test -z "$(git status --porcelain -- {{generated}})"
 
 # Vet and lint with the govengers baseline (.golangci.yml, copied from govengers/standards)
 lint:
@@ -31,20 +44,45 @@ db-lint:
     go tool sqlc generate
     go build ./...
 
-# Migrations on a scratch database, then sqlc vet; needs a Postgres at DATABASE_ADMIN_URL (DAT-016)
+# Migrations, then sqlc vet against the migrated schema (DAT-016). The launcher starts a throwaway PostgreSQL for
+# this recipe alone (unset POSTGRESTEST_URL: a long-lived test server must not get the schema), so the migrations
+# go into its maintenance database
 db-check: db-lint
-    psql "{{admin_url}}" -qc 'DROP DATABASE IF EXISTS sqlc_check' -c 'CREATE DATABASE sqlc_check'
-    DATABASE_URL="{{check_url}}" go run ./cmd/migrate
-    SQLC_DATABASE_URL="{{check_url}}" go tool sqlc vet
-    go test ./internal/database/... ./internal/repository/...
+    env -u POSTGRESTEST_URL {{postgrestest}} bash -c 'DATABASE_URL="$POSTGRESTEST_URL" go run ./cmd/migrate && SQLC_DATABASE_URL="$POSTGRESTEST_URL" go tool sqlc vet'
 
-# Unit tests of changed and affected packages; the Go test cache replays the rest (TST-014). Fails below the coverage threshold (TST-010)
+# Fail on a breaking change of the OpenAPI document against base, a git ref (default: the pull request's base
+# branch in CI, otherwise origin/main); a base without the document passes
+openapi-check base="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    base="{{base}}"
+    base="${base:-origin/${BASE_REF:-main}}"
+    mkdir -p sandbox
+    if ! git show "$base:openapi.yaml" > sandbox/openapi-base.yaml 2>/dev/null; then
+        echo "openapi-check: $base has no openapi.yaml"
+        exit 0
+    fi
+    go tool oasdiff breaking sandbox/openapi-base.yaml openapi.yaml --fail-on ERR
+
+# Unit tests of changed and affected packages on one PostgreSQL; the Go test cache replays the rest (TST-014, TST-016).
+# Fails below the coverage threshold (TST-010) and when a test took longer than the budget (TST-017)
 test *flags:
     mkdir -p sandbox
-    {{gotestsum}} --format testname --jsonfile sandbox/unit.json -- -race -coverprofile=sandbox/unit.raw.cover {{flags}} ./...
+    {{postgrestest}} {{gotestsum}} --format testname --jsonfile sandbox/unit.json -- -race -coverprofile=sandbox/unit.raw.cover {{flags}} ./...
     grep -v -E '{{coverage_excluded}}' sandbox/unit.raw.cover > sandbox/unit.cover
     go tool cover -func=sandbox/unit.cover > sandbox/unit.func
     awk -v threshold={{coverage_threshold}} '/^total:/ { found = 1; sub("%", "", $3); print "coverage " $3 "%"; if ($3 + 0 < threshold) { print "coverage is below " threshold "%"; exit 1 } } END { if (!found) { print "no coverage total"; exit 1 } }' sandbox/unit.func
+    "{{just_executable()}}" test-budget sandbox/unit.json
+
+# Fail when a test in the go test JSON took longer than the budget, also tests replayed from the cache (TST-017)
+test-budget report:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    slow="$({{gotestsum}} tool slowest --jsonfile {{report}} --threshold {{test_budget}})"
+    if [ -n "$slow" ]; then
+        printf 'tests over the %s budget (TST-017):\n%s\n' "{{test_budget}}" "$slow"
+        exit 1
+    fi
 
 # Every unit test, uncached and shuffled: the nightly run and before a release (TST-014, TST-005)
 test-all: (test "-count=1" "-shuffle=on")
@@ -55,11 +93,12 @@ e2e-build:
     go build -cover -trimpath -buildvcs=false -ldflags "-X main.version=e2e" -o sandbox/e2e-build/server ./cmd/server
     go test -c -tags e2e -trimpath -buildvcs=false -o sandbox/e2e-build/ ./test/e2e/...
 
-# The end-to-end suite against the built server, always (TST-011)
-test-e2e-all: e2e-build
+# The end-to-end suite against the built server, always and shuffled (TST-011, TST-005); the nightly run calls it
+test-e2e-all *flags: e2e-build
     rm -rf sandbox/coverage && mkdir -p sandbox/coverage
-    E2E_BINARY={{justfile_directory()}}/sandbox/e2e-build/server GOCOVERDIR={{justfile_directory()}}/sandbox/coverage {{gotestsum}} --format testname --jsonfile sandbox/e2e.json -- -tags e2e -trimpath -buildvcs=false -count=1 ./test/e2e/...
+    E2E_BINARY={{justfile_directory()}}/sandbox/e2e-build/server GOCOVERDIR={{justfile_directory()}}/sandbox/coverage {{postgrestest}} {{gotestsum}} --format testname --jsonfile sandbox/e2e.json -- -tags e2e -trimpath -buildvcs=false -count=1 -shuffle=on {{flags}} ./test/e2e/...
     go tool covdata percent -i=sandbox/coverage
+    "{{just_executable()}}" test-budget sandbox/e2e.json
 
 # The end-to-end suite, skipped when server, suite and inputs equal a green run (TST-015); keeps sandbox/e2e.json for CI badges
 test-e2e: e2e-build
@@ -88,5 +127,25 @@ build:
 docker-build:
     docker build -f docker/server.Dockerfile --build-arg VERSION={{version}} -t {{image}}:{{version}} .
 
-# Everything CI runs on a change; db-check needs a Postgres and runs on its own
-check: lint db-lint test test-e2e vulncheck
+# ---- frontend (ui/) ----
+
+# Backend and frontend for development: open the frontend's dev server, which proxies the API and login routes to the Go server (DEP-001)
+dev: ui-install
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT
+    go run ./cmd/server &
+    cd ui && bun run dev
+
+# The frontend's dependencies, as bun.lock pins them
+ui-install:
+    cd ui && bun install --frozen-lockfile
+
+# The frontend's type checks, component and page tests and build; CI's TypeScript job (bun-version in ci.yml)
+test-typescript: ui-install
+    cd ui && bunx vue-tsc --noEmit
+    cd ui && bun test
+    cd ui && bun run build
+
+# Everything CI runs on a change, in one go
+check: lint generate-check db-check openapi-check test test-e2e test-typescript vulncheck

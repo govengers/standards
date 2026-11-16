@@ -6,11 +6,13 @@ Profile: service
 
 - **Severity:** should
 - **Principle:** P1, P8
-- **Check:** application code outside `internal/`; more than `main.go` in a `cmd/<name>/` directory; generated query code importable from outside the repository package; ad-hoc top-level directories for what has a standard place.
+- **Check:** application code outside `internal/`; more than `main.go` in a `cmd/<name>/` directory, other than the composition file of a template application (`domain.go`, see `playbooks/deriving-an-application.md`); generated query code importable from outside the repository package; ad-hoc top-level directories for what has a standard place.
 
 ```
 cmd/server/main.go          entry point: reads configuration, wires every component (LAY-002)
 cmd/migrate/main.go         runs migrations against DATABASE_URL
+cmd/generate/main.go        writes the API clients from the livewire registry (a service that ships clients)
+cmd/<name>/main.go          the generated CLI, named after the service (a service that ships clients)
 internal/
   controller/               transport: one controller per business object and transport (ARC-001)
   service/                  business logic: one service per business object
@@ -27,7 +29,12 @@ internal/
   event/                    event types + WebSocket hub
   web/                      embedded frontend (DEP-001)
   testdatabase/             per-test database helper
-test/e2e/              end-to-end suite against the built binary (TST-011)
+pkg/                        for other modules: the API's payload types and the generated clients
+  api/                      request and response types, imported by the controllers and the clients
+  apiclient/                generated Go client, committed
+  command/                  generated CLI commands, committed
+openapi.yaml                generated OpenAPI document, committed; openapi-check diffs it against main
+test/e2e/                   end-to-end suite against the built binary (TST-011)
 docker/server.Dockerfile    one Dockerfile per executable
 hack/                       dev helper scripts
 sandbox/                    scratch output, gitignored
@@ -35,7 +42,7 @@ sqlc.yaml
 justfile
 ```
 
-`cmd/<name>` matches the executable (`cmd/server`, `cmd/controller`). Use `pkg/` only for code meant to be imported by other modules; usually it should be its own library repo instead.
+`cmd/<name>` matches the executable (`cmd/server`, `cmd/controller`). Use `pkg/` only for code meant to be imported by other modules: the API's payload types and the clients generated from them, so another service, an agent or a test calls the API through the same types the server decodes. Anything else meant for other modules (a reusable component, a protocol) belongs in its own library repo. The generated files are committed and checked by `just generate-check` (TCH-003); the coverage gate excludes `pkg/`.
 
 ### LAY-002 Bootstrap in `main()` in a fixed, visible order
 
