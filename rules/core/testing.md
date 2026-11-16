@@ -16,7 +16,7 @@ Trivial wiring and one-line delegations need no dedicated test. Bug fixes come w
 - **Principle:** P5, P9
 - **Check:** repository or query tests that mock the database driver or the sqlc `Queries`; service tests that replace a repository with a mock or fake; tests that run against SQLite while production runs Postgres.
 
-Mocks hide broken migrations, constraint violations and SQL errors - the bugs that matter at this layer. Use a real Postgres (embedded-postgres or testcontainers), one database per test, migrated by the app's own migrator, dropped in `t.Cleanup`.
+Mocks hide broken migrations, constraint violations and SQL errors - the bugs that matter at this layer. Use a real PostgreSQL through `github.com/govengers/postgrestest` (TST-016): every test gets its own database, a copy of a template that the app's own migrator built once.
 
 ```go
 func TestCreateUserRejectsDuplicateUsername(t *testing.T) {
@@ -31,7 +31,7 @@ func TestCreateUserRejectsDuplicateUsername(t *testing.T) {
 }
 ```
 
-Shared test databases fail on the second run because of leftover rows. If migrating per test gets slow, clone a migrated template database (`CREATE DATABASE x TEMPLATE migrated`, around 50 ms).
+A database shared by several tests fails on the second run because of leftover rows. A server shared by every test is fine (TST-013): the database is what each test owns.
 
 ### TST-003 Every permission checker has allowed and denied tests
 
@@ -60,9 +60,9 @@ func TestIsAdmin(t *testing.T) {
 
 - **Severity:** should
 - **Principle:** P9
-- **Check:** `time.Sleep` to wait for async work; assertions on `time.Now()`; real timers of seconds in tests; tests that only pass in a given order or fail under `-count=2`.
+- **Check:** `time.Sleep` to wait for async work; assertions on `time.Now()`; real timers of seconds in tests; retries that wait a real backoff; tests that only pass in a given order or fail under `-count=2`.
 
-Inject a clock or a short interval through the options struct; wait on a channel or poll with a deadline instead of sleeping.
+Inject a clock, a short interval or the backoff through the options struct; wait on a channel or poll with a deadline instead of sleeping. A sleep is the most common reason a test breaks its time budget (TST-017).
 
 ```go
 // bad
@@ -177,15 +177,17 @@ The suite runs uncached (`-count=1`): it depends on a running binary, which the 
 
 - **Severity:** must
 - **Principle:** P8, P9
-- **Check:** a test without the `e2e` build tag that connects to anything other than a server it started itself (an `httptest` server, its own embedded Postgres); that depends on a service it did not start (a shared database from `DATABASE_URL`, Docker Compose, a staging API); that reads files outside its module other than `t.TempDir()`; or that relies on state another test or an earlier run left behind.
+- **Check:** a test without the `e2e` build tag that connects to anything other than a server it started itself or the test run started for it (an `httptest` server, the embedded PostgreSQL of govengers/postgrestest); that uses a database it did not create for itself; that depends on a service it did not start (a shared database from `DATABASE_URL`, Docker Compose, a staging API); that reads files outside its module other than `t.TempDir()`; or that relies on state another test or an earlier run left behind.
 
 `go test` caches a passing package and replays the result until the compiled test binary, an environment variable it read or a module file it opened changes (TST-014). Everything else is invisible to the cache: a test against a shared database stays green in the cache after the database changed. Hermetic tests are also the only ones that give the same result on every laptop and every runner. Whatever needs a running system belongs in the end-to-end suite.
+
+One PostgreSQL server for every test of a run is hermetic, as long as every test owns its database, a fresh copy of the migrated template (TST-016), and the server's address is the same in every run (TST-019). The server is infrastructure like the Go toolchain; the database is the test's state.
 
 ```go
 // bad: a database the test does not own and the cache cannot see
 pool, err := pgxpool.New(t.Context(), os.Getenv("DATABASE_URL"))
 
-// good: a database the test starts, migrates and drops (TST-002)
+// good: a fresh copy of the migrated template, for this test alone (TST-016)
 pool := testdatabase.New(t)
 ```
 
@@ -193,11 +195,11 @@ pool := testdatabase.New(t)
 
 - **Severity:** should
 - **Principle:** P8
-- **Check:** `-count=1` or another flag that disables caching in the default `just test` recipe or the CI unit test step; CI that does not carry the Go build cache from one run to the next; no scheduled full run (`just test-all`).
+- **Check:** `-count=1` or another flag that disables caching in the default `just test` recipe or the CI unit test step; CI that does not carry the Go build cache from one run to the next; no scheduled full run (`just test-all`, `just test-e2e-all`, every browser journey); a full run that does not shuffle.
 
 `go test` already runs only what changed. It caches each passing package keyed on its compiled test binary and reruns it only when something linked into that binary changes: a change in `internal/service/billing` reruns the tests of billing and of every package that links it, nothing else. That is more precise than selecting packages from a git diff: the key sees through dead code and includes embedded files, `go.mod` and the environment variables the tests read. `-race`, `-coverprofile`, `-json`, `-run`, `-short` and `-v` keep the cache on, and coverage is replayed from it, so the coverage gate (TST-010) still sees every package. `-count=1` turns it off and runs everything, every time.
 
-The cache is only sound for hermetic tests (TST-013). A flaky test that passed once stays cached until its package changes, so a scheduled full run (`just test-all`: uncached, `-shuffle=on` for TST-005) runs nightly on main and before every release. In CI the govengers reusable workflow restores the build cache of the newest main run and saves it on every push to main; pull requests only restore it.
+The cache is only sound for hermetic tests (TST-013) whose inputs stay the same from run to run (TST-019). A flaky test that passed once stays cached until its package changes, so a scheduled full run runs nightly on main and on every `v*` tag: `just test-all` and `just test-e2e-all`, uncached and `-shuffle=on` (TST-005), and every browser journey (TST-020), none of them skipped by a record (TST-015). In CI the govengers reusable workflow restores each job's build and test cache from the newest main run; pushes to main save it, and so does a pull request that found no cache of its Go release and `go.sum`.
 
 ```just
 # Changed and affected packages; the test cache replays the rest
@@ -213,7 +215,7 @@ test-all: (test "-count=1" "-shuffle=on")
 
 - **Severity:** should
 - **Principle:** P8, P9
-- **Check:** CI that runs the end-to-end suite although neither the binary, the suite nor their inputs changed; a skip decided by changed paths or a git diff instead of the built artifacts; a skip key without the suite's non-Go inputs (compose files, fixtures, Playwright specs); a scheduled or release run that honors the skip.
+- **Check:** CI that runs the end-to-end suite or the browser journeys although neither the binary, the suite nor their inputs changed; a skip decided by changed paths or a git diff instead of the built artifacts; a skip key without the suite's non-Go inputs (compose files, fixtures, Playwright specs, the frontend's tracked files, the Bun version); a scheduled or release run that honors the skip.
 
 The suite tests the whole artifact, so it cannot be scoped by package. The artifact itself says whether anything changed: built with `-trimpath -buildvcs=false` and a fixed version, the binary and the compiled suite are byte-identical for identical code, differ for every change that reaches them, and stay identical when only code they do not link changes (another `cmd`, a tool, docs). Their hash plus the suite's other inputs is the key; a green run records it, and a run whose key is recorded skips. Path filters are the wrong tool: they cannot tell whether a changed file reaches the binary, so they run the suite for changes it never sees or miss inputs nobody listed.
 
@@ -236,4 +238,88 @@ test-e2e: e2e-build
     mkdir -p sandbox/e2e-passed && touch "sandbox/e2e-passed/$key"
 ```
 
-CI carries `sandbox/e2e-passed` from run to run; the nightly run calls `just test-e2e-all`, which never skips. The full recipes are in [templates/](../../templates/).
+CI carries `sandbox/e2e-passed` from run to run; the nightly run calls `just test-e2e-all`, which never skips. The browser journeys skip the same way: their key is the server binary they run against (built reproducibly, so it covers Go code, embedded migrations and queries), every tracked file below the frontend directory (`git ls-files ui`), the justfile and the Bun version. The full recipes are in [templates/](../../templates/).
+
+### TST-016 One PostgreSQL per test run through govengers/postgrestest, a migrated template copied per test
+
+- **Severity:** should
+- **Principle:** P2, P8
+- **Check:** a repo with its own embedded-PostgreSQL harness (a copied `internal/postgrestest`, a `TestMain` that starts embedded-postgres itself) instead of `github.com/govengers/postgrestest`; a PostgreSQL server started per test; migrations applied per test instead of once into a template; a `just test` that runs several PostgreSQL packages without the launcher (`postgrestest`).
+
+Copies of a harness get no fixes, and the slow ones cost every CI run half a minute: unpacking the binaries with a pure-Go xz under `-race` took 27 s, the system tar 5 s. postgrestest starts the server, builds the template once with the app's own migrator and gives every test `CREATE DATABASE ... TEMPLATE` (about 20 ms) instead of a migration run that grows with the schema. The launcher `postgrestest <command>` starts one server for the whole `go test ./...` and points every test binary at it through `POSTGRESTEST_URL`; a package run on its own (`go test ./internal/repository`) starts its own server. The library also tunes the server for tests, keeps the binaries in `~/.embedded-postgres-go` (CI caches that directory), bounds concurrent creates and drops, and stops servers that crashed runs left behind without touching another checkout's.
+
+```go
+// internal/testdatabase: the per-test database helper of LAY-001
+var server = postgrestest.New(&postgrestest.Options{
+    Migrate:     database.MigrateConnection, // the app's own goose migrations, run once
+    Fingerprint: database.MigrationsFingerprint, // postgrestest.FingerprintFS(migrations): a long-lived server rebuilds the template only when it changes
+})
+
+func Main(m *testing.M) { goleak.VerifyTestMain(server.Main(m)) }
+
+// New returns a pool on a fresh copy of the migrated template, dropped after the test.
+func New(t *testing.T) *pgxpool.Pool { return server.Pool(t) }
+```
+
+```just
+postgrestest := "go tool postgrestest"
+
+test *flags:
+    {{postgrestest}} {{gotestsum}} --format testname --jsonfile sandbox/unit.json -- -race {{flags}} ./...
+```
+
+Every test package calls `testdatabase.Main(m)` in its `TestMain`. The `server` variable is the one package variable a test helper may hold (DES-003), and it needs no exception in `.govengers.yml`. A service whose tests need several schemas gives each its own template with `server.WithTemplate`.
+
+### TST-017 Every test stays inside a time budget, read from the test JSON
+
+- **Severity:** should
+- **Principle:** P8, P9
+- **Check:** `just test` or `just test-e2e-all` without a step that fails the run when one test took longer than the budget (default 5 s with the race detector); a budget read from wall clock or log output instead of the JSON of `go test` (`gotestsum --jsonfile`); a test over the budget without its own budget and a reason in the list the step reads.
+
+A slow test is a defect with a known set of causes: a sleep or a real backoff (TST-005), production cost parameters (Argon2 at production strength costs several seconds per test under `-race`: inject cheap parameters through the options), a server started per test (TST-016), a migration per test. The budget catches each of them the day it is added, instead of the day the suite has become slow. The JSON names every test and subtest with its duration, also for packages replayed from the cache, so the gate sees the whole suite on every run. A parent test counts its sequential subtests.
+
+```just
+test_budget := "5s"
+
+# after the tests, in the test recipe
+slow="$(go tool gotestsum tool slowest --jsonfile sandbox/unit.json --threshold {{test_budget}})"; if [ -n "$slow" ]; then printf 'tests over the %s budget (TST-017):\n%s\n' "{{test_budget}}" "$slow"; exit 1; fi
+```
+
+The allowance list, if a repo needs one, names the package, the test, its own budget and the reason, and stays short: each entry is a test somebody should make faster.
+
+### TST-018 The pipeline has a time budget, and CI fails over it
+
+- **Severity:** should
+- **Principle:** P8
+- **Check:** a pull request pipeline without a budget step; a budget without separate warm and cold limits; a budget that only prints. With the govengers reusable workflow: `budget-warm-seconds` and `budget-cold-seconds` not set (README of govengers/.github).
+
+A pipeline grows by seconds nobody notices until it takes twenty minutes, and then every change waits for it. The budget makes the growth a failure in the pull request that causes it. Warm means the jobs restored a cache of the same Go release and `go.sum`; cold is a new dependency or toolchain. The default budget of a service is 300 s warm and 480 s cold, failing above 20 % over; a library stays well below. Full runs (nightly, tags) have no budget.
+
+Reference: the first service built on the whole library set (unit, end-to-end, derivation and frontend jobs in parallel, PostgreSQL 18, race detector, coverage) measured on GitHub-hosted runners and an M-series laptop:
+
+| Run | Wall clock |
+|-----|-----------|
+| pull request pipeline, cold caches | 326 s |
+| pull request pipeline, warm caches (docs-only change) | 68 s |
+| `just test` locally, cold (template built, test cache empty) | 8 s for 89 tests; slowest test 3.4 s |
+| `just test` locally, nothing changed | 0.9 s, every package from the cache |
+| `just test-e2e` locally, without and with a green record | 6.6 s, under 2 s |
+| copy of the migrated template per test | 20 to 40 ms |
+
+### TST-019 Test inputs stay the same from run to run
+
+- **Severity:** should
+- **Principle:** P8
+- **Check:** a test that reads an environment variable whose value changes between runs (a random port, a timestamp, a temporary path); a test that opens a file inside the module that a recipe rewrites before every run; a test server address derived from the process ID or chosen at random and passed through the environment; a launcher started differently in CI and locally (`go run` once, `go tool` the other time), which changes `PATH`.
+
+`go test` keys a cached result on the test binary, every environment variable the binary read with its value, and every file inside the module it opened, by size and modification time (TST-014). One changing input reruns the whole package on every run, silently: nothing fails, CI just gets slower. A shared test server therefore lives at an address derived from the checkout's path (postgrestest's launcher does this), and a test that needs a scratch file writes it into `t.TempDir()`. Check it once after changing a harness: the second `just test` reports every package `(cached)`; `GODEBUG=gocachetest=1 go test ./pkg` lists the inputs.
+
+### TST-020 Pull requests run a handful of browser smoke journeys; every journey runs nightly
+
+- **Severity:** should
+- **Principle:** P8, P9
+- **Check:** a pull request pipeline that runs more than about five browser journeys; a browser journey for what a component test against a fake API or an API test covers; no tag that selects the pull request set (`@smoke`); the full set not run nightly and on tags; a browser job without a timeout.
+
+A browser journey costs seconds, a browser install and a running server; it also fails for reasons that have nothing to do with the change. Pages and components are tested in a second against a fake of the API (`bun test` with jsdom), the API by the end-to-end suite. The browser proves only that the pieces fit: a pull request runs the smoke journeys (login, the main journey of the core business object), the rest runs nightly and on `v*` tags. The job caches the browser by the lockfile, skips like TST-015 when server and frontend are unchanged, uploads the report on failure, and has a `timeout-minutes`: a hung server must not hold a runner for six hours.
+
+Reference: three smoke journeys take 2.6 s locally including the frontend build. A browser job's first CI run spends 20 s on the browser's install and its caches pay for themselves from the second run.

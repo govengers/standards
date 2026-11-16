@@ -58,7 +58,7 @@ Methods then read `s.options.UserRepository`. Value objects and pure helpers are
 
 - **Severity:** must
 - **Principle:** P3, P9
-- **Check:** package-level `var` holding a client, connection, pool, cache, config map, registry, event hub or anything assigned after startup. Constants, sentinel errors, compiled regexes and lookup tables that are never written are fine.
+- **Check:** package-level `var` holding a client, connection, pool, cache, config map, registry, event hub or anything assigned after startup. Constants, sentinel errors, compiled regexes and lookup tables that are never written are fine, and so is the one shared test server of a test binary (a `postgrestest.Server` in a test helper package or test file, closed by `TestMain`, TST-016).
 
 Globals hide dependencies, couple tests to each other and make parallel tests impossible. Pass the dependency in (DES-001). A library that is a process-wide registry by design declares that as an exception in `.govengers.yml`.
 
