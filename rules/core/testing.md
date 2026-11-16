@@ -282,8 +282,10 @@ A slow test is a defect with a known set of causes: a sleep or a real backoff (T
 test_budget := "5s"
 
 # after the tests, in the test recipe
-slow="$(go tool gotestsum tool slowest --jsonfile sandbox/unit.json --threshold {{test_budget}})"; if [ -n "$slow" ]; then printf 'tests over the %s budget (TST-017):\n%s\n' "{{test_budget}}" "$slow"; exit 1; fi
+slow="$(go tool gotestsum tool slowest --jsonfile sandbox/unit.json --threshold {{test_budget}})"; if [ -n "$slow" ]; then printf 'tests over the %s budget (TST-017):\n%s\n' "{{test_budget}}" "$slow"; go clean -testcache; exit 1; fi
 ```
+
+A package replayed from the cache reports the durations of the run that was cached. A test that ran over the budget once on a loaded machine would fail every rerun until its package changes, and in CI every pull request that restores that cache. So the step drops the test cache when it fails (`go clean -testcache`): the next run measures again, at the price of one uncached run.
 
 The allowance list, if a repo needs one, names the package, the test, its own budget and the reason, and stays short: each entry is a test somebody should make faster.
 
@@ -291,16 +293,17 @@ The allowance list, if a repo needs one, names the package, the test, its own bu
 
 - **Severity:** should
 - **Principle:** P8
-- **Check:** a pull request pipeline without a budget step; a budget without separate warm and cold limits; a budget that only prints. With the govengers reusable workflow: `budget-warm-seconds` and `budget-cold-seconds` not set (README of govengers/.github).
+- **Check:** a service's pull request pipeline without a budget step; a budget without separate warm and cold limits; a budget that only prints. With the govengers service workflow (`go-service.yml`): `budget-warm-seconds` and `budget-cold-seconds` not set (README of govengers/.github). The library workflow (`go-library.yml`) has no budget inputs yet, so a library on it is not a finding of this check.
 
 A pipeline grows by seconds nobody notices until it takes twenty minutes, and then every change waits for it. The budget makes the growth a failure in the pull request that causes it. Warm means the jobs restored a cache of the same Go release and `go.sum`; cold is a new dependency or toolchain. The default budget of a service is 300 s warm and 480 s cold, failing above 20 % over; a library stays well below. Full runs (nightly, tags) have no budget.
 
-Reference: the first service built on the whole library set (unit, end-to-end, derivation and frontend jobs in parallel, PostgreSQL 18, race detector, coverage) measured on GitHub-hosted runners and an M-series laptop:
+Reference: the first service built on the whole library set (unit, end-to-end and derivation jobs in parallel, PostgreSQL 18, race detector, coverage) measured on GitHub-hosted runners and an M-series laptop:
 
 | Run | Wall clock |
 |-----|-----------|
 | pull request pipeline, cold caches | 326 s |
 | pull request pipeline, warm caches (docs-only change) | 68 s |
+| the same with a frontend job (TST-020), its run skipped as unchanged | 119 s |
 | `just test` locally, cold (template built, test cache empty) | 8 s for 89 tests; slowest test 3.4 s |
 | `just test` locally, nothing changed | 0.9 s, every package from the cache |
 | `just test-e2e` locally, without and with a green record | 6.6 s, under 2 s |

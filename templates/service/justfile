@@ -50,18 +50,25 @@ db-lint:
 db-check: db-lint
     env -u POSTGRESTEST_URL {{postgrestest}} bash -c 'DATABASE_URL="$POSTGRESTEST_URL" go run ./cmd/migrate && SQLC_DATABASE_URL="$POSTGRESTEST_URL" go tool sqlc vet'
 
-# Fail on a breaking change of the OpenAPI document against base, a git ref (default: the pull request's base
-# branch in CI, otherwise origin/main); a base without the document passes
+# Fail on a breaking change of the OpenAPI document since the branch left base, a git ref (default: the pull
+# request's base branch in CI, otherwise origin/main); a missing ref fails, a base without the document passes
 openapi-check base="":
     #!/usr/bin/env bash
     set -euo pipefail
     base="{{base}}"
     base="${base:-origin/${BASE_REF:-main}}"
-    mkdir -p sandbox
-    if ! git show "$base:openapi.yaml" > sandbox/openapi-base.yaml 2>/dev/null; then
-        echo "openapi-check: $base has no openapi.yaml"
+    if ! git rev-parse --quiet --verify "$base^{commit}" > /dev/null; then
+        echo "openapi-check: $base is not a commit" >&2
+        exit 1
+    fi
+    # the merge base: what main gained after the branch left it is not a change of the branch
+    fork="$(git merge-base "$base" HEAD)"
+    if ! git cat-file -e "$fork:openapi.yaml" 2>/dev/null; then
+        echo "openapi-check: $base had no openapi.yaml when the branch left it"
         exit 0
     fi
+    mkdir -p sandbox
+    git show "$fork:openapi.yaml" > sandbox/openapi-base.yaml
     go tool oasdiff breaking sandbox/openapi-base.yaml openapi.yaml --fail-on ERR
 
 # Unit tests of changed and affected packages on one PostgreSQL; the Go test cache replays the rest (TST-014, TST-016).
@@ -74,13 +81,15 @@ test *flags:
     awk -v threshold={{coverage_threshold}} '/^total:/ { found = 1; sub("%", "", $3); print "coverage " $3 "%"; if ($3 + 0 < threshold) { print "coverage is below " threshold "%"; exit 1 } } END { if (!found) { print "no coverage total"; exit 1 } }' sandbox/unit.func
     "{{just_executable()}}" test-budget sandbox/unit.json
 
-# Fail when a test in the go test JSON took longer than the budget, also tests replayed from the cache (TST-017)
+# Fail when a test in the go test JSON took longer than the budget, also tests replayed from the cache (TST-017).
+# On a failure it drops the test cache: a replayed result keeps its slow duration, so the next run measures again
 test-budget report:
     #!/usr/bin/env bash
     set -euo pipefail
     slow="$({{gotestsum}} tool slowest --jsonfile {{report}} --threshold {{test_budget}})"
     if [ -n "$slow" ]; then
         printf 'tests over the %s budget (TST-017):\n%s\n' "{{test_budget}}" "$slow"
+        go clean -testcache
         exit 1
     fi
 

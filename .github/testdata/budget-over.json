@@ -1,0 +1,3 @@
+{"Action":"run","Package":"example.com/p","Test":"TestSlow"}
+{"Action":"pass","Package":"example.com/p","Test":"TestSlow","Elapsed":6.1}
+{"Action":"pass","Package":"example.com/p","Elapsed":6.2}
