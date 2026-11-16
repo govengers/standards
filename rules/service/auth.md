@@ -49,7 +49,7 @@ These are `govengers/auth/authorization`'s checks, combined with `All`, `Any` an
 - **Principle:** P3, P9
 - **Check:** authorization functions with a `*gin.Context` parameter.
 
-The same checker then works in HTTP handlers, WebSocket broadcast filters, background jobs and tests, which build the context with the actor and nothing else.
+The same checker then works in HTTP handlers, WebSocket broadcast filters, background jobs and tests, which build the context with the identity (`auth.WithIdentity`) and nothing else.
 
 ### AUTH-005 Data-dependent authorization lives in the service layer
 
@@ -98,7 +98,7 @@ func ID(ctx context.Context) uuid.UUID {
 - **Principle:** P6
 - **Check:** user role or active flag taken from the session or token payload and trusted for longer than one request.
 
-The session holds who logged in (`auth.Identity`), not what the application lets them do. A middleware behind `session.Guard` loads the application's user by the identity through the (cached) user repository on each request and puts it into the context (AUTH-006), so deactivations and role changes take effect immediately. The Guard's `Refreshers` re-check the login itself once per `RefreshInterval` (a deleted user, a changed password, a removed team ends the session).
+The session holds who logged in (`auth.Identity`), not what the application lets them do. A middleware behind `session.Guard` loads the application's user by the identity through the (cached) user repository on each request and puts it into the context (AUTH-006). Because AUTH-003's checks read the identity, the middleware also replaces the identity in the context (`auth.WithIdentity`) with one carrying the user's current active flag, roles and permissions, so deactivations and role changes take effect immediately. The Guard's `Refreshers` re-check the login itself once per `RefreshInterval` (a deleted user, a changed password, a removed team ends the session).
 
 ### AUTH-008 Seed the first admin only when none exists
 

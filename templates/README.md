@@ -26,4 +26,4 @@ Starting points for a new govengers repo. Copy the folder of the profile, replac
 
 ## Checked by CI
 
-[.github/workflows/templates.yml](../.github/workflows/templates.yml) lints the workflows with actionlint, the Dockerfile with hadolint parses the justfiles with just and runs their `test-budget` on fixed test JSON (`.github/testdata`), so a template cannot quietly break.
+[.github/workflows/templates.yml](../.github/workflows/templates.yml) lints the workflows with actionlint, the Dockerfile with hadolint, parses the justfiles with just and runs their `test-budget` on fixed test JSON (`.github/testdata`), so a template cannot quietly break.

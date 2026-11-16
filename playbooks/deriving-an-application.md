@@ -17,16 +17,19 @@ A derived application is a copy, and copies get no fixes. So the template applic
 # also in derive/_skeleton are composition points and come back as stubs.
 # The foundation never imports or names anything listed here.
 cmd/server/domain.go
+cmd/server/domain_test.go
 internal/controller/domain.go
 internal/controller/task.go
 internal/database/domain.go
 internal/database/migrations/00100_tasks.sql
+internal/generated/domain.go
 internal/model/task.go
 internal/repository/queries/tasks.sql
 internal/repository/task.go
 internal/service/task.go
 ui/src/domain.ts
 ui/src/pages/Tasks/
+ui/test/domain.ts
 test/e2e/task_test.go
 ```
 
