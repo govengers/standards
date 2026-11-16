@@ -25,7 +25,7 @@ internal/
   authorization/            composable permission checkers
   database/                 pool, goose migrations (migrations/*.sql), Migrate()
   event/                    event types + WebSocket hub
-  web/                      SPA embedding + dev proxy
+  web/                      embedded frontend (DEP-001)
   testdatabase/             per-test database helper
 test/e2e/              end-to-end suite against the built binary (TST-011)
 docker/server.Dockerfile    one Dockerfile per executable
@@ -155,7 +155,7 @@ func (s *Server) Run(ctx context.Context) error {
     case <-ctx.Done():
     }
 
-    s.ready.Store(false) // readiness now returns 503
+    s.options.Health.SetDraining() // readiness now answers 503 draining (LAY-004)
     time.Sleep(5 * time.Second) // let endpoints and load balancers drop the pod
 
     shutdownContext, cancel := context.WithTimeout(context.Background(), 20*time.Second) // below the 30 s grace period
@@ -173,9 +173,20 @@ func (s *Server) Run(ctx context.Context) error {
 
 - **Severity:** should
 - **Principle:** P6
-- **Check:** no health endpoint; a readiness check that does not cover the database; health routes behind authentication.
+- **Check:** no health endpoint; probes written by hand instead of `github.com/govengers/telemetry/health`; a readiness check that does not cover the database; a liveness probe that looks at a dependency; health routes behind authentication or counted in request metrics, wide events or traces.
 
-`GET /api/health` returns 200 when the process is up; readiness additionally pings the pool. Both are excluded from access logs and wide-event sampling.
+`health.New` takes the readiness checks by name (a pool ping, a Redis ping), runs them concurrently under one timeout below the probe's, caches the result for a second and answers 503 when one fails or after `SetDraining` (LAY-003). The body names each check's status, never an error text; `OnCheckFailure` gives `main` the reason. Liveness (`health.LivenessRoute`, `GET /api/health`) answers 200 while the process serves HTTP and never looks at a dependency, so a database outage does not restart every pod. Readiness is `health.ReadinessRoute`, `GET /api/ready`. Both are skipped by the request metrics, the wide events and the traces.
+
+```go
+probes, err := health.New(&health.Options{
+    Checks:         map[string]health.Check{"database": pool.Ping},
+    OnCheckFailure: recordUnready, // a wide event per failure, never blocking
+})
+if err != nil {
+    return fmt.Errorf("create health probes: %w", err)
+}
+ginadapter.RegisterHealthRoutes(engine, probes) // telemetry/ginadapter, before the UI (API-010)
+```
 
 ### LAY-005 A fresh checkout builds and tests with one command
 

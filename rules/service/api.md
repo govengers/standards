@@ -239,4 +239,17 @@ Either an OpenAPI spec with generated TypeScript types, or ConnectRPC with gener
 
 - **Severity:** must
 - **Principle:** P6
-- **Check:** a webhook endpoint that parses JSON before verifying the signature, or does not verify it at all.
+- **Check:** a webhook endpoint that parses JSON before verifying the signature, or does not verify it at all; a signature compared with `==` instead of in constant time; no tolerance on the signed timestamp, so a captured delivery can be replayed forever; a receiver of govengers/events deliveries that does not use the `Bus` inbox or `events.Verify`.
+
+Read the body once, with a size limit (API-005), verify the signature over exactly those bytes, then decode them. A JSON decode and re-encode changes the bytes and the signature no longer matches, or worse, a verifier that signs its own re-encoding accepts a body the sender never signed. Deliveries between govengers services are Standard Webhooks (`webhook-id`, `webhook-timestamp`, `webhook-signature`); `events.Verify` checks them with rotation and a 5-minute tolerance, and the `Bus` inbox does that, deduplicates by event ID and enqueues a job (EVT-002). Provider webhooks (payments, source control) use the provider SDK's verifier on the raw body.
+
+```go
+// bad: decoded before the signature is checked
+var event PaymentEvent
+if err := ginContext.ShouldBindJSON(&event); err != nil { ... }
+
+// good
+body, err := io.ReadAll(http.MaxBytesReader(ginContext.Writer, ginContext.Request.Body, 1<<20))
+if err != nil { ... }
+event, err := webhook.ConstructEvent(body, ginContext.GetHeader("Stripe-Signature"), c.options.WebhookSecret)
+```

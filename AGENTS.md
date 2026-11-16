@@ -15,15 +15,20 @@ This repo is the govengers Go standards: principles in `MANIFESTO.md`, graded ru
 | new business object, endpoint or business action | `playbooks/business-object-lifecycle.md`, `rules/service/api.md`, `rules/service/auth.md`, `rules/service/logging.md`, `rules/service/metrics.md`, `rules/service/realtime.md`, `rules/service/data-integrity.md` |
 | query, migration, transaction | `rules/service/data-access.md`, `rules/service/data-integrity.md` |
 | configuration value | `rules/service/configuration.md` |
-| goroutine, worker, background job, recurring work | `rules/core/concurrency.md`, `rules/service/jobs.md` (govengers/jobs) |
+| goroutine, worker, background job, recurring work, job progress | `rules/core/concurrency.md`, `rules/service/jobs.md` (govengers/jobs) |
+| events or webhooks between services, a request to a user-chosen URL, a secret at rest | `rules/service/events.md` (govengers/events), `rules/service/jobs.md`, API-012 |
+| uploads, downloads, blobs | `rules/service/storage.md` (govengers/storage) |
+| mail | `rules/service/mail.md` (govengers/mail), `rules/service/jobs.md` |
+| PDF or image documents | `rules/service/documents.md` (govengers/typst) |
 | call to another system | `rules/core/resilience.md`, ARC-005 |
 | logging, error recording | `rules/service/logging.md` |
 | metrics | `rules/service/metrics.md` (govengers/telemetry) |
 | tracing | `rules/service/tracing.md` (govengers/telemetry/tracing) |
 | version reporting, profiling | `rules/service/observability.md` |
 | WebSocket, broadcasts | `rules/service/realtime.md` |
-| tests | `rules/core/testing.md` |
+| tests, test speed, CI time | `rules/core/testing.md` (govengers/postgrestest) |
 | startup, shutdown, Dockerfile, CI | `rules/service/layout.md`, `rules/service/deployment.md`, `rules/core/toolchain.md`; start from `templates/` |
+| a new application derived from a template application | `playbooks/deriving-an-application.md` |
 
 The non-negotiables, in one line each:
 

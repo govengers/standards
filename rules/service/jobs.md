@@ -40,8 +40,9 @@ Delivery is at least once. A handler runs again after a crash between its effect
 // bad: a second run sends a second mail
 return c.options.Mailer.Send(ctx, message)
 
-// good: the provider deduplicates on the job's ID
-return c.options.Mailer.Send(ctx, message, mailer.IdempotencyKey(job.ID.String()))
+// good: the provider deduplicates on the job's ID (govengers/mail, Resend transport)
+message.IdempotencyKey = job.ID.String()
+return c.options.Mailer.Send(ctx, message)
 ```
 
 ### JOB-004 Configure every consumed queue and size the pool for the worker
@@ -206,4 +207,25 @@ jobStore, err := postgresadapter.New(&postgresadapter.Options{
     Pool:        pool,
     Propagators: []jobs.Propagator{authadapter.Identity()},
 })
+```
+
+### JOB-012 A job a user waits on reports its progress and leaves its result on the job
+
+- **Severity:** should
+- **Principle:** P7, P8
+- **Check:** a job a user waits for (an import, an export, a generated document) whose progress or result goes into an own status table, a cache entry or a polled endpoint instead of `jobs.ReportProgress` and `jobs.SetResult`; an error of `SetResult` returned bare (every retry repeats the work); a result that carries data instead of a reference and a summary; a user interface that reads the job table instead of `postgresadapter.View` or the livewire `jobs` resource.
+
+The library stores both with the job, fenced by the attempt's lease, so a worker that lost the job cannot overwrite the attempt that took it over, and a failed attempt keeps its last progress ("row 214 of 500") for the retry that waits. `ReportProgress` never blocks and is a no-op outside an attempt, so the same service method runs from a request too. `SetResult` keeps at most 64 KiB of JSON on success; its errors are deterministic. The view is the stable shape for screens and API clients: status (`queued`, `running`, `succeeded`, `failed`, `cancelled`), nullable progress, nullable error class, the result; with livewire, `livewireadapter` declares it as a live resource with `cancelJob` and `retryJob` mutations, so a progress bar needs no polling.
+
+```go
+for index, row := range rows {
+    if err := c.options.ImportService.ImportRow(ctx, row); err != nil {
+        return err
+    }
+    _ = jobs.ReportProgress(ctx, jobs.Progress{Fraction: float64(index+1) / float64(len(rows)), Message: fmt.Sprintf("row %d of %d", index+1, len(rows))}) // only a fraction outside 0..1 fails
+}
+if err := jobs.SetResult(ctx, ImportResult{FileID: job.Payload.FileID, Rows: len(rows)}); err != nil {
+    return jobs.Permanent(err) // deterministic: a retry would import again and fail again
+}
+return nil
 ```
