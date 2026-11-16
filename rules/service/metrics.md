@@ -50,7 +50,7 @@ These three answer the first questions of every incident: is traffic normal, wha
 requestMetrics, err := ginadapter.NewMetricsMiddleware(&ginadapter.MetricsOptions{
     Registerer: metricsRegistry,
     Namespace:  "billing",
-    SkipRoutes: []string{"/api/health"}, // like LOG-010
+    SkipRoutes: []string{health.LivenessRoute, health.ReadinessRoute}, // like LOG-010
 })
 if err != nil {
     return err
@@ -95,9 +95,21 @@ The namespace is the service name, the subsystem the component (`http`, `db`, `q
 
 - **Severity:** should
 - **Principle:** P6, P7
-- **Check:** a client package (ARC-005) without a call counter by outcome and a duration histogram; no database pool metrics; a govengers/jobs worker without the `prometheusadapter` Observer and depth source (JOB-010).
+- **Check:** a client package (ARC-005) without a call counter by outcome and a duration histogram; a pgx pool without `pgxadapter.NewPoolCollector` (or a hand-written collector doing the same); two pools with the same `Name`; a govengers/jobs worker without the `prometheusadapter` Observer and depth source (JOB-010); a govengers library with a `prometheusadapter` (storage, mail, typst, events, auth) used without it.
 
-When a dependency slows down, its own duration histogram shows it before the request latency does. Clients and the job runner receive the `Registerer` through their options like everything else (MET-002). Export pool statistics with a collector that reads `pgxpool.Pool.Stat()` at scrape time instead of updating gauges on every acquire.
+When a dependency slows down, its own duration histogram shows it before the request latency does. Clients and the job runner receive the `Registerer` through their options like everything else (MET-002). Pool statistics come from `github.com/govengers/telemetry/pgxadapter`: `NewPoolCollector` reads `pool.Stat()` at scrape time, so acquires pay nothing, and labels every series with the constant `pool` label, so a service with a second pool (a key pool, a reporting replica) registers one collector per pool under its own `Name`. Saturation is `connections{state="acquired"} / ignoring(state) max_connections`; a rising `rate(acquire_waits_total)` means requests queue for a connection.
+
+```go
+_, err = pgxadapter.NewPoolCollector(&pgxadapter.PoolOptions{
+    Registerer: metricsRegistry,
+    Namespace:  "billing",
+    Name:       "main", // the pool label: billing_db_pool_connections{pool="main",state="acquired"}
+    Stat:       func() pgxadapter.Stat { return pool.Stat() },
+})
+if err != nil {
+    return fmt.Errorf("register pool metrics: %w", err)
+}
+```
 
 ```go
 callDurations := prometheus.NewHistogramVec(prometheus.HistogramOpts{

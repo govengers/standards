@@ -13,19 +13,23 @@ Declare every value once with `govengers/config` in `main` and bind it into one 
 ```go
 // Configuration holds every value the service reads, filled once at startup.
 type Configuration struct {
-    LogLevel       string
-    DevMode        bool
-    DatabaseURL    string
-    AllowedOrigins []string
+    LogLevel        string
+    DevMode         bool
+    DatabaseURL     string
+    AllowedOrigins  []string
+    ShutdownTimeout time.Duration
+    PublicURL       url.URL
 }
 
 func loadConfiguration() (*Configuration, error) {
     configuration := &Configuration{}
     err := config.LoadConfig([]config.Value{
-        config.String("LOG_LEVEL").NotEmpty().Default("info").Into(&configuration.LogLevel),
+        config.Enum("LOG_LEVEL", "debug", "info", "warn", "error").Default("info").Into(&configuration.LogLevel),
         config.Bool("DEV_MODE").Default(false).Into(&configuration.DevMode),
         config.String("DATABASE_URL").NotEmpty().Sensitive().Into(&configuration.DatabaseURL),
         config.StringArray("ALLOWED_ORIGINS").NotEmpty().Into(&configuration.AllowedOrigins),
+        config.Duration("SHUTDOWN_TIMEOUT").Default(20 * time.Second).Into(&configuration.ShutdownTimeout),
+        config.URL("PUBLIC_URL").Schemes("https", "http").NotEmpty().Into(&configuration.PublicURL),
     })
     if err != nil {
         return nil, err
@@ -33,6 +37,8 @@ func loadConfiguration() (*Configuration, error) {
     return configuration, nil
 }
 ```
+
+Use the typed values, so a value is checked once at startup and never parsed again: `config.Duration` for a time span (`30s`, `5m`; a bare number is refused, so `300` never means 300 nanoseconds), `config.Enum` for a closed set (DES-009), `config.URL` for an address, `config.Float` for a ratio. An `Int` holding seconds and multiplied in `main` is the pattern they replace.
 
 ### CFG-002 Mark every secret as sensitive
 
@@ -96,6 +102,6 @@ func (c *Client) apiKey() string {
 openrouterClient, err := openrouter.New(&openrouter.Options{
     APIKey:  configuration.OpenRouterAPIKey,
     BaseURL: configuration.OpenRouterBaseURL,
-    Timeout: time.Duration(configuration.OpenRouterTimeoutSeconds) * time.Second,
+    Timeout: configuration.OpenRouterTimeout, // config.Duration("OPENROUTER_TIMEOUT").Default(30 * time.Second)
 })
 ```

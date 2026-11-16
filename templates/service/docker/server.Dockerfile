@@ -20,6 +20,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
+# Payloads and generated clients the server links (LAY-001); a service without pkg/ deletes this line.
+COPY pkg/ pkg/
 COPY --from=ui /src/dist/spa internal/web/html
 ARG VERSION=dev
 ARG TARGETOS

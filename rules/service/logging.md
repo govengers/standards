@@ -105,7 +105,7 @@ Each layer adds fields under its own namespace. Nothing is too small to record i
 
 | Namespace | Fields |
 |-----------|--------|
-| `db` | `operation`, `entity`, `rows`, `queries`, `duration_ms`, `tx` (`committed`, `rolled_back`) |
+| `db` | `queries`, `duration_ms`, `slowest_ms`, `failure`, `sqlstate` (written by the pgx tracer); `operation`, `entity`, `rows`, `tx` (`committed`, `rolled_back`) by the repository |
 | `cache` | `hit`, `backend`, `error`, `fallback` |
 | `http.<service>` | `method`, `status`, `attempts`, `duration_ms`, `error` |
 | `queue` | `job.id`, `job.queue`, `job.attempt`, `enqueued` |
@@ -125,7 +125,15 @@ if response != nil {
 we.Err("http.stripe.error", err)
 ```
 
-Put the instrumentation into the shared client, repository helper or middleware once, so individual call sites do not have to remember it.
+Put the instrumentation into the shared client, repository helper or middleware once, so individual call sites do not have to remember it. Two pieces exist already and are required where they apply:
+
+- **Database:** `github.com/govengers/telemetry/pgxadapter.NewTracer()`, built once in `main` and given to every pool (composed with `otelpgx` through `multitracer.New` when the service traces). It adds every statement of a unit of work to the wide event in its context: count, total and slowest duration, the first failure's class and SQLSTATE, never SQL text or arguments. Two tracers overwrite each other's totals.
+- **Socket work:** livewire runs units of work the HTTP middleware never sees (socket frames, subscription re-runs, after-commit reports). `livewire.RegistryOptions.StartUnit` puts the application's wide event into the context before each of them, so the pgx tracer records `db.*` on it like on a request; the finish it returns emits the event and states an outcome for a unit that got none (LOG-011). The `Observer` is for metrics, not for the event.
+
+```go
+databaseTracer := pgxadapter.NewTracer() // one for every pool
+poolConfig.ConnConfig.Tracer = multitracer.New(otelpgx.NewTracer(), databaseTracer)
+```
 
 ### LOG-005 Use stable, namespaced keys
 
@@ -212,7 +220,7 @@ middleware, err := ginadapter.NewMiddleware(&ginadapter.Options{
         keepDegraded,
         wideevent.Rate(10), // every 10th of the rest
     )),
-    SkipPaths: []string{"/api/health"},
+    SkipPaths: []string{health.LivenessRoute, health.ReadinessRoute}, // LAY-004
 })
 ```
 

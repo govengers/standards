@@ -115,9 +115,9 @@ The instrumentations follow the semantic conventions and are maintained with the
 
 ```go
 engine.Use(otelgin.Middleware("billing", otelgin.WithGinFilter(func(ginContext *gin.Context) bool {
-    return ginContext.FullPath() != "/api/health"
+    return ginContext.FullPath() != health.LivenessRoute && ginContext.FullPath() != health.ReadinessRoute
 })))
-poolConfig.ConnConfig.Tracer = otelpgx.NewTracer()
+poolConfig.ConnConfig.Tracer = multitracer.New(otelpgx.NewTracer(), databaseTracer) // databaseTracer: the one pgxadapter.NewTracer() of main (LOG-004)
 ```
 
 ### TRC-008 Use OpenTelemetry for traces only

@@ -6,11 +6,13 @@ Profile: service
 
 - **Severity:** should
 - **Principle:** P1, P8
-- **Check:** application code outside `internal/`; more than `main.go` in a `cmd/<name>/` directory; generated query code importable from outside the repository package; ad-hoc top-level directories for what has a standard place.
+- **Check:** application code outside `internal/`; more than `main.go` in a `cmd/<name>/` directory, other than the composition file of a template application (`domain.go`, see `playbooks/deriving-an-application.md`); generated query code importable from outside the repository package; ad-hoc top-level directories for what has a standard place.
 
 ```
 cmd/server/main.go          entry point: reads configuration, wires every component (LAY-002)
 cmd/migrate/main.go         runs migrations against DATABASE_URL
+cmd/generate/main.go        writes the API clients from the livewire registry (a service that ships clients)
+cmd/<name>/main.go          the generated CLI, named after the service (a service that ships clients)
 internal/
   controller/               transport: one controller per business object and transport (ARC-001)
   service/                  business logic: one service per business object
@@ -25,9 +27,14 @@ internal/
   authorization/            composable permission checkers
   database/                 pool, goose migrations (migrations/*.sql), Migrate()
   event/                    event types + WebSocket hub
-  web/                      SPA embedding + dev proxy
+  web/                      embedded frontend (DEP-001)
   testdatabase/             per-test database helper
-test/e2e/              end-to-end suite against the built binary (TST-011)
+pkg/                        for other modules: the API's payload types and the generated clients
+  api/                      request and response types, imported by the controllers and the clients
+  apiclient/                generated Go client, committed
+  command/                  generated CLI commands, committed
+openapi.yaml                generated OpenAPI document, committed; openapi-check diffs it against main
+test/e2e/                   end-to-end suite against the built binary (TST-011)
 docker/server.Dockerfile    one Dockerfile per executable
 hack/                       dev helper scripts
 sandbox/                    scratch output, gitignored
@@ -35,7 +42,7 @@ sqlc.yaml
 justfile
 ```
 
-`cmd/<name>` matches the executable (`cmd/server`, `cmd/controller`). Use `pkg/` only for code meant to be imported by other modules; usually it should be its own library repo instead.
+`cmd/<name>` matches the executable (`cmd/server`, `cmd/controller`). Use `pkg/` only for code meant to be imported by other modules: the API's payload types and the clients generated from them, so another service, an agent or a test calls the API through the same types the server decodes. Anything else meant for other modules (a reusable component, a protocol) belongs in its own library repo. The generated files are committed and checked by `just generate-check` (TCH-003); the coverage gate excludes `pkg/`.
 
 ### LAY-002 Bootstrap in `main()` in a fixed, visible order
 
@@ -155,7 +162,7 @@ func (s *Server) Run(ctx context.Context) error {
     case <-ctx.Done():
     }
 
-    s.ready.Store(false) // readiness now returns 503
+    s.options.Health.SetDraining() // readiness now answers 503 draining (LAY-004)
     time.Sleep(5 * time.Second) // let endpoints and load balancers drop the pod
 
     shutdownContext, cancel := context.WithTimeout(context.Background(), 20*time.Second) // below the 30 s grace period
@@ -173,9 +180,20 @@ func (s *Server) Run(ctx context.Context) error {
 
 - **Severity:** should
 - **Principle:** P6
-- **Check:** no health endpoint; a readiness check that does not cover the database; health routes behind authentication.
+- **Check:** no health endpoint; probes written by hand instead of `github.com/govengers/telemetry/health`; a readiness check that does not cover the database; a liveness probe that looks at a dependency; health routes behind authentication or counted in request metrics, wide events or traces.
 
-`GET /api/health` returns 200 when the process is up; readiness additionally pings the pool. Both are excluded from access logs and wide-event sampling.
+`health.New` takes the readiness checks by name (a pool ping, a Redis ping), runs them concurrently under one timeout below the probe's, caches the result for a second and answers 503 when one fails or after `SetDraining` (LAY-003). The body names each check's status, never an error text; `OnCheckFailure` gives `main` the reason. Liveness (`health.LivenessRoute`, `GET /api/health`) answers 200 while the process serves HTTP and never looks at a dependency, so a database outage does not restart every pod. Readiness is `health.ReadinessRoute`, `GET /api/ready`. Both are skipped by the request metrics, the wide events and the traces.
+
+```go
+probes, err := health.New(&health.Options{
+    Checks:         map[string]health.Check{"database": pool.Ping},
+    OnCheckFailure: recordUnready, // a wide event per failure, never blocking
+})
+if err != nil {
+    return fmt.Errorf("create health probes: %w", err)
+}
+ginadapter.RegisterHealthRoutes(engine, probes) // telemetry/ginadapter, before the UI (API-010)
+```
 
 ### LAY-005 A fresh checkout builds and tests with one command
 

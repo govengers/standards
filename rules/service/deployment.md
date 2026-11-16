@@ -2,18 +2,28 @@
 
 Profile: service
 
-### DEP-001 Ship one static binary with the frontend embedded
+### DEP-001 Ship one static binary with the frontend embedded; develop behind the frontend's dev server
 
 - **Severity:** should
 - **Principle:** P10
-- **Check:** frontend and backend deployed as separate artifacts for one app without a reason; `CGO_ENABLED=1` without a dependency that needs it.
+- **Check:** frontend and backend deployed as separate artifacts for one app without a reason; `CGO_ENABLED=1` without a dependency that needs it; a development proxy to the frontend dev server inside the Go binary (`httputil.ReverseProxy` to Vite, a `STATIC_HOSTING`-style switch); a dev-server proxy rule by plain prefix (`'/api'`) that also catches frontend routes.
 
-The web module embeds the built SPA with `//go:embed all:html` and has two modes:
+In production the binary embeds the built frontend (`//go:embed all:html`) and serves it: files as they are, content-hashed assets with a long cache, every other path `index.html` so a deep link opens the app, and a missing asset a 404 rather than `index.html` (a chunk of an older build must fail, not load HTML as script). The web package is registered last (API-010).
 
-| Mode | Config | Behavior |
-|------|--------|----------|
-| static | `STATIC_HOSTING=true` | serves embedded files, unknown paths return `index.html`, long cache headers outside dev mode |
-| dev proxy | `STATIC_HOSTING=false` | reverse-proxies to the frontend dev server |
+In development the frontend's dev server runs in front: the browser opens the dev server, which serves the frontend with hot reload and proxies the API, the login routes and the WebSocket to the Go server. The browser sees one origin, so the session cookie, the login redirects and the socket's origin check behave as in production, and the binary carries no code that only development needs. `just dev` starts both.
+
+```ts
+// vite.config.ts
+server: {
+  proxy: {
+    // regex keys: a plain '/api' is a prefix match and would also proxy a frontend route such as /api-keys
+    '^/api/': { target: backend, ws: true },
+    '^/auth/': { target: backend },
+  },
+},
+```
+
+Leave `changeOrigin` off: the Go server then sees the dev server's host, which the socket's same-origin check compares the `Origin` header with. Until the frontend was built once, the embed directory holds a committed placeholder `index.html`, so the package compiles and the API works on a fresh checkout (LAY-005).
 
 ### DEP-002 Multi-stage build with cacheable dependency layers
 

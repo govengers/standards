@@ -1,7 +1,7 @@
 name: Templates
 
 # The templates are copied into every new repo, so they are checked like code: workflows with actionlint, the
-# Dockerfile with hadolint, the justfiles by parsing them with just.
+# Dockerfile with hadolint, the justfiles by parsing them with just and running their budget step on fixtures.
 on:
   push:
     branches: [main]
@@ -36,3 +36,17 @@ jobs:
         run: |
           just --justfile templates/service/justfile --summary
           just --justfile templates/library/justfile --summary
+
+      # Both templates' TST-017 step on fixed go test JSON: it passes below the budget and fails above it; their full
+      # end-to-end run shuffles (TST-014)
+      - name: justfiles budget and shuffle
+        run: |
+          for justfile in templates/service/justfile templates/library/justfile; do
+            budget() { just --justfile "$justfile" --set gotestsum "go run gotest.tools/gotestsum@v1.13.0" test-budget "$PWD/.github/testdata/$1"; }
+            budget budget-under.json
+            if budget budget-over.json; then
+              echo "$justfile: test-budget passed a test over the budget" >&2
+              exit 1
+            fi
+            just --justfile "$justfile" --show test-e2e-all | grep -q -- '-shuffle=on'
+          done

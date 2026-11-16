@@ -93,7 +93,8 @@ Buckets, by topic. Spawn every bucket of the profile in **one message** so they 
 | tests-toolchain | `core/testing.md`, `core/toolchain.md` | all |
 | library | `library/library.md` | library |
 | architecture | `service/architecture.md`, `service/layout.md`, `service/configuration.md`, `service/api.md`, `service/auth.md`, `service/deployment.md` | service |
-| data | `service/data-access.md`, `service/data-integrity.md`, `service/jobs.md` | service |
+| data | `service/data-access.md`, `service/data-integrity.md` | service |
+| integrations | `service/jobs.md`, `service/events.md`, `service/storage.md`, `service/mail.md`, `service/documents.md` | service |
 | observability | `service/logging.md`, `service/metrics.md`, `service/tracing.md`, `service/observability.md`, `service/realtime.md` | service |
 
 Then list `$STANDARDS/rules/core/*.md` and `$STANDARDS/rules/<profile>/*.md`: every file must be
