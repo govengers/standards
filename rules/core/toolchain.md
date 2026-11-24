@@ -57,7 +57,7 @@ The reviewer reports lint, vet and test failures under this rule.
 - **Principle:** P2, P8
 - **Check:** no `justfile`, or CI steps that run commands the justfile does not offer (so local and CI checks drift apart).
 
-Standard recipes: `just build`, `just test` (changed packages, TST-014), `just test-all` (every package, uncached), `just test-e2e` (skips an unchanged artifact, TST-015), `just test-e2e-all`, `just lint`, `just generate`, and `just check` running everything CI runs on a change. CI calls the same recipes. Start from [templates/](../../templates/).
+Standard recipes: `just build`, `just test` (changed packages, TST-014), `just test-all` (every package, uncached), `just test-e2e` (skips an unchanged artifact, TST-015), `just test-e2e-all`, `just lint`, `just generate`, for a service with a frontend `just ui-e2e` (the browser journeys a change needs, TST-020), and `just check` running everything CI runs on a change. CI calls the same recipes. Start from [templates/](../../templates/).
 
 ### TCH-006 Format with gofumpt and goimports
 
@@ -75,9 +75,11 @@ Standard recipes: `just build`, `just test` (changed packages, TST-014), `just t
 
 - **Severity:** must
 - **Principle:** P8
-- **Check:** CI without `govulncheck ./...`; `govulncheck` run with `-json`, `-format sarif` or `-format openvex` as the gate.
+- **Check:** CI that does not run `govulncheck ./...` when `go.mod`, `go.sum` or the Go release changed and on every scheduled run; `govulncheck` run with `-json`, `-format sarif` or `-format openvex` as the gate.
 
 `govulncheck` only reports vulnerabilities in functions the code actually reaches, so its findings are worth acting on. With `-json`, `sarif` or `openvex` output it exits 0 regardless of findings, so a gate on those formats never fails. Use the default text mode as the gate, and `-mode binary` to scan the shipped binary.
+
+The vulnerability database changes without the code changing, so a finding is news about the dependencies, not about the change in front of it. The scan therefore runs when dependencies or toolchain change and every night, where a finding opens an issue (TST-021), and an unrelated fix is not held up by a fresh advisory. `just vulncheck` records a green scan keyed on `go.mod`, `go.sum` and the Go release and skips while they are unchanged; `FULL=true` (the scheduled run) always scans. The price: a source change that newly reaches a vulnerable function of an unchanged dependency is found by the night's scan, not by its pull request.
 
 ```bash
 go tool govulncheck ./...                       # gate: exits 3 on reachable vulnerabilities
