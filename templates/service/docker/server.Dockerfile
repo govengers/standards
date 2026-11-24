@@ -15,7 +15,7 @@ RUN bun run build
 FROM --platform=$BUILDPLATFORM golang:1.26@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS build
 WORKDIR /src
 # Dependencies in their own layer, before the source (DEP-002): a code change does not download them again.
-# A layer, not a cache mount: CI's layer cache keeps layers, but not cache mounts.
+# A layer, not a cache mount: it serves local builds, Docker's layer cache keeps it between them.
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
@@ -26,7 +26,7 @@ COPY --from=ui /src/dist/spa internal/web/html
 ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH
-# The compile cache mount speeds up local rebuilds; in CI it starts empty and costs nothing.
+# The compile cache mount speeds up local rebuilds; CI carries it between runs (go-service.yml).
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/server ./cmd/server

@@ -115,7 +115,7 @@ The derived application has the foundation and an empty domain. Add the domain o
 | declarations | `internal/controller/<object>.go`, the services in `DomainServices` |
 | wiring | `cmd/server/domain.go` |
 | payloads, enums | `pkg/api/<object>.go`, `internal/generated/domain.go`, then `just generate` |
-| tests | the domain's reads and writes in `cmd/server/domain_test.go`, the end-to-end journey in `test/e2e/<object>_test.go`, the browser smoke journey of the core object (TST-020) |
+| tests | the domain's reads and writes in `cmd/server/domain_test.go`, the end-to-end journey in `test/e2e/<object>_test.go`, the browser journeys of the core object in `ui/e2e/<object>.spec.ts`, one of them `@smoke`, with a `// covers:` line claiming the object's pages (TST-020) |
 | frontend | pages under `ui/src/pages/<Domain>/`, routes and navigation in `ui/src/domain.ts`, fake rows in `ui/test/domain.ts` |
 
 List every new domain file in `derive/domain.txt` if the application is to be a template itself, and keep its own `derive-check` in CI.
