@@ -1,0 +1,8 @@
+// covers: ui/src/pages/Users ui/src/pages/Missing
+// Copied in as ui/e2e/broken.spec.ts by the templates.yml case that expects browser-select to fail on a claim of a
+// path that does not exist (TST-020).
+import { test } from '@playwright/test'
+
+test('a page that was deleted', async ({ page }) => {
+  await page.goto('/missing')
+})
