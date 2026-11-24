@@ -36,6 +36,8 @@ The template ships no frontend, as for `test-typescript`: the first service is t
 - Specs in `ui/e2e/*.spec.ts`, each with a `// covers:` line naming the pages its journeys open, the smoke journeys tagged `@smoke`.
 - Every journey on its own state; no serial block and no worker limit in the configuration (TST-020). The recipe sets workers, full parallelism and the global timeout.
 - What a run writes (`node_modules`, the build output, `playwright-report`, `test-results`) is ignored by git, or it changes the next run's key.
+- The frontend the journeys run carries no per-commit stamp (a version, a commit or a build time in the bundle), or `ui-e2e` builds it with a fixed one: the server embeds the bundle, so a stamp makes every commit a new key and the journeys never skip. The template's `ui-build` stamps nothing. A service whose bundle shows its version gives `ui-build` a parameter (`ui-build stamp=version`) and lets `ui-e2e` depend on `(ui-build "e2e")`.
+- Locally the recipe installs no browser (it does when `CI` is set). Once per machine and Playwright version: `cd ui && bunx playwright install --only-shell chromium`.
 
 ## Checked by CI
 
