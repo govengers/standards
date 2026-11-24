@@ -1,8 +1,8 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 # Template for a govengers service (govengers/standards templates/service). Replace "example" with the service name.
-# Delete what does not apply: the frontend recipes for a service without UI, openapi-check and the clients in generate
-# for a service that ships no API clients.
+# Delete what does not apply: the frontend recipes and the browser_ variables for a service without UI, openapi-check and
+# the clients in generate for a service that ships no API clients.
 # Tools are pinned in go.mod (TCH-002): go get -tool gotest.tools/gotestsum@v1.13.0 golang.org/x/vuln/cmd/govulncheck@v1.9.0
 # github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 github.com/govengers/postgrestest/cmd/postgrestest@v0.1.0 github.com/oasdiff/oasdiff@v1.38.0
 
@@ -16,6 +16,15 @@ coverage_excluded := "/cmd/|/internal/repository/internal/sqlc/|/internal/testda
 # Per-test budget (TST-017)
 test_budget := "5s"
 e2e_inputs := "test/e2e"
+# The browser journeys (TST-020): the specs, the Go programs the journeys execute (the server and every program the
+# harness runs; the record's key fingerprints them), the workers and the selected run's global timeout
+browser_specs := "ui/e2e"
+browser_binaries := "./cmd/server github.com/govengers/postgrestest/cmd/postgrestest"
+browser_workers := "2"
+browser_budget_ms := "180000"
+# Paths whose change needs no journey beyond @smoke. Only Go code and embedded files, which the binaries fingerprint,
+# and files no journey process reads: the record's key leaves them out (TST-020)
+browser_unaffected := "cmd internal pkg test docs docker .github go.mod go.sum sqlc.yaml openapi.yaml README.md"
 # Generated files, committed; generate-check fails when they differ from what generate writes (TCH-003)
 generated := "internal/repository/internal/sqlc pkg/apiclient pkg/command openapi.yaml ui/src/api"
 
@@ -124,9 +133,19 @@ test-e2e: e2e-build
     mkdir -p "$passed"
     cp sandbox/e2e.json "$passed/e2e.json"
 
-# Scan for known vulnerabilities in reachable code (TCH-008)
+# FULL=true (the nightly run) always scans: the vulnerability database changes without the code changing.
+# Scan for known vulnerabilities in reachable code, skipped when go.mod, go.sum and Go equal a green scan's (TCH-008)
 vulncheck:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    key=$( { shasum -a 256 go.mod go.sum; go env GOVERSION; } | shasum -a 256 | cut -c1-32)
+    passed="sandbox/vulncheck-passed/$key"
+    if [ "${FULL:-false}" != true ] && [ -f "$passed" ]; then
+        echo "vulncheck skipped: go.mod, go.sum and the Go release equal the green scan $key"
+        exit 0
+    fi
     go tool govulncheck ./...
+    mkdir -p sandbox/vulncheck-passed && touch "$passed"
 
 # Build the server with the version from git (DEP-005)
 build:
@@ -150,11 +169,123 @@ dev: ui-install
 ui-install:
     cd ui && bun install --frozen-lockfile
 
-# The frontend's type checks, component and page tests and build; CI's TypeScript job (bun-version in ci.yml)
-test-typescript: ui-install
-    cd ui && bunx vue-tsc --noEmit
-    cd ui && bun test
+# The frontend's production build, which the server embeds (DEP-001)
+ui-build: ui-install
     cd ui && bun run build
 
+# The frontend's type checks, component and page tests and build; CI's TypeScript job (bun-version in ci.yml)
+test-typescript: ui-install && ui-build
+    cd ui && bunx vue-tsc --noEmit
+    cd ui && bun test
+
+# Changed paths: the arguments, one each, or else git's: with BASE_SHA (CI) its diff against the checkout, without it
+# the merge base with origin/${BASE_REF:-main} against the working tree plus untracked files. A spec selects itself and
+# is selected by a path at or below one it claims (a `// covers: <path> ...` line, the path must exist); a path below
+# browser_unaffected adds nothing; FULL=true, a base that is not a commit of a full clone, or any other path: all.
+# The browser journeys a change needs (TST-020): prints `all` or the --grep pattern `@smoke|<spec>\.spec\.ts|...`
+[positional-arguments]
+browser-select *paths:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -f # claims and paths are words, never globs
+    specs_directory="{{browser_specs}}"
+    every() { echo "browser-select: $1: every journey" >&2; echo all; exit 0; }
+    specs=$(cd "$specs_directory" && find . -type f -name '*.spec.ts' | sed 's#^\./##' | LC_ALL=C sort)
+    # one line per claim: the spec, a tab, the claimed path
+    claims=""
+    while IFS= read -r spec; do
+        [ -n "$spec" ] || continue
+        for claim in $(sed -n 's#^[[:space:]]*// covers:##p' "$specs_directory/$spec"); do
+            claim="${claim%/}"
+            if [ ! -e "$claim" ]; then
+                echo "browser-select: $specs_directory/$spec claims $claim, which does not exist" >&2
+                exit 1
+            fi
+            claims+="$spec"$'\t'"$claim"$'\n'
+        done
+    done <<< "$specs"
+    if [ "${FULL:-false}" = true ]; then every "FULL=true"; fi
+    if [ "$#" -gt 0 ]; then
+        changed=$(printf '%s\n' "$@")
+    else
+        shallow=$(git rev-parse --is-shallow-repository)
+        [ "$shallow" = false ] || every "a shallow clone has no reliable base"
+        if [ -n "${BASE_SHA:-}" ]; then
+            git cat-file -e "$BASE_SHA^{commit}" 2> /dev/null || every "BASE_SHA $BASE_SHA is not a commit of this clone"
+            # a direct comparison also sees a push that moved the branch back; --no-renames lists old and new path
+            changed=$(git diff -z --name-only --no-renames "$BASE_SHA" | tr '\0' '\n')
+        else
+            base="origin/${BASE_REF:-main}"
+            fork=$(git merge-base "$base" HEAD 2> /dev/null) || every "no merge base of HEAD with $base"
+            changed=$( { git diff -z --name-only --no-renames "$fork"; git ls-files -z --others --exclude-standard; } | tr '\0' '\n')
+        fi
+    fi
+    selected=""
+    while IFS= read -r path; do
+        path="${path#./}"
+        [ -n "$path" ] || continue
+        found=""
+        spec="${path#"$specs_directory"/}"
+        if [ "$spec" != "$path" ] && grep -qxF -- "$spec" <<< "$specs"; then found+="$spec"$'\n'; fi
+        while IFS=$'\t' read -r spec claim; do
+            [ -n "$claim" ] || continue
+            case "$path" in "$claim" | "$claim"/*) found+="$spec"$'\n' ;; esac
+        done <<< "$claims"
+        if [ -n "$found" ]; then
+            selected+="$found"
+            continue
+        fi
+        for unaffected in {{browser_unaffected}}; do
+            case "$path" in "$unaffected" | "$unaffected"/*) continue 2 ;; esac
+        done
+        every "$path is no spec, not claimed and not below browser_unaffected"
+    done <<< "$changed"
+    pattern=$(printf '%s' "$selected" | sed '/^$/d' | LC_ALL=C sort -u | sed 's/[][\.*^$()+?{}|]/\\&/g' | paste -s -d '|' -)
+    echo "@smoke${pattern:+|$pattern}"
+
+# Skipped when the binaries the journeys execute, every file they may read, Bun, the selection and SHARD equal a green
+# run's (TST-015); FULL=true runs every journey and ignores the records; flags go to playwright test, and a run with
+# flags neither reads nor writes a record. CI sets SHARD (1/2) and CI, which installs Chromium.
+# The browser journeys the change needs (browser-select), in parallel, against the server with the frontend (TST-020)
+[positional-arguments]
+ui-e2e *flags: ui-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # after the frontend, which the server embeds, and reproducibly: equal code gives equal bytes (TST-015)
+    rm -rf sandbox/ui-e2e && mkdir -p sandbox/ui-e2e
+    go build -trimpath -buildvcs=false -ldflags "-X main.version=e2e" -o sandbox/ui-e2e/ {{browser_binaries}}
+    selection=$("{{just_executable()}}" browser-select)
+    pathspec=(.)
+    for path in {{browser_unaffected}}; do pathspec+=(":(exclude,literal)$path"); done
+    # the binaries, and every file that exists and git tracks or does not ignore outside browser_unaffected: path and content
+    key=$( {
+        shasum -a 256 sandbox/ui-e2e/*
+        git ls-files -z --cached --others --exclude-standard -- "${pathspec[@]}" | while IFS= read -r -d '' file; do
+            if [ -f "$file" ]; then printf '%s\0' "$file"; fi
+        done | LC_ALL=C sort -zu | xargs -0 shasum -a 256
+        bun --version
+        printf 'selection %s\nshard %s\n' "$selection" "${SHARD:-}"
+    } | shasum -a 256 | cut -c1-32)
+    passed="sandbox/ui-e2e-passed/$key"
+    if [ "$#" -eq 0 ] && [ "${FULL:-false}" != true ] && [ -f "$passed" ]; then
+        echo "ui-e2e skipped: binaries, files, Bun, selection $selection and shard ${SHARD:-none} equal the green run $key"
+        exit 0
+    fi
+    if [ -n "${CI:-}" ]; then (cd ui && bunx playwright install --with-deps --only-shell chromium); fi
+    timeout={{browser_budget_ms}}
+    if [ "${FULL:-false}" = true ]; then timeout=600000; fi
+    playwright=(--fully-parallel --workers={{browser_workers}} --global-timeout="$timeout")
+    if [ "$selection" != all ]; then playwright+=(--grep "$selection"); fi
+    if [ -n "${SHARD:-}" ]; then playwright+=(--shard="$SHARD"); fi
+    echo "ui-e2e: playwright test ${playwright[*]} $*"
+    binaries="$PWD/sandbox/ui-e2e"
+    (cd ui && E2E_SERVER="$binaries/server" "$binaries/postgrestest" bunx playwright test "${playwright[@]}" "$@")
+    if [ "$#" -eq 0 ]; then mkdir -p sandbox/ui-e2e-passed && touch "$passed"; fi
+
+# Every browser journey, never skipped: the nightly run
+[positional-arguments]
+ui-e2e-all *flags:
+    FULL=true "{{just_executable()}}" ui-e2e "$@"
+
 # Everything CI runs on a change, in one go
-check: lint generate-check db-check openapi-check test test-e2e test-typescript vulncheck
+check: lint generate-check db-check openapi-check test test-e2e test-typescript ui-e2e vulncheck
