@@ -23,7 +23,7 @@ browser_binaries := "./cmd/server github.com/govengers/postgrestest/cmd/postgres
 browser_workers := "2"
 browser_budget_ms := "180000"
 # Paths whose change needs no journey beyond @smoke. Only Go code and embedded files, which the binaries fingerprint,
-# and files no journey process reads: the record's key leaves them out (TST-020)
+# and files no journey process reads: the record's key leaves them out, except a path a spec claims (TST-020)
 browser_unaffected := "cmd internal pkg test docs docker .github go.mod go.sum sqlc.yaml openapi.yaml README.md"
 # Generated files, committed; generate-check fails when they differ from what generate writes (TCH-003)
 generated := "internal/repository/internal/sqlc pkg/apiclient pkg/command openapi.yaml ui/src/api"
@@ -181,7 +181,8 @@ test-typescript: ui-install && ui-build
 # Changed paths: the arguments, one each, or else git's: with BASE_SHA (CI) its diff against the checkout, without it
 # the merge base with origin/${BASE_REF:-main} against the working tree plus untracked files. A spec selects itself and
 # is selected by a path at or below one it claims (a `// covers: <path> ...` line, the path must exist); a path below
-# browser_unaffected adds nothing; FULL=true, a base that is not a commit of a full clone, or any other path: all.
+# browser_unaffected adds nothing; FULL=true, CI without BASE_SHA, a base that is not a commit of a full clone, or any
+# other path: all.
 # The browser journeys a change needs (TST-020): prints `all` or the --grep pattern `@smoke|<spec>\.spec\.ts|...`
 [positional-arguments]
 browser-select *paths:
@@ -195,7 +196,8 @@ browser-select *paths:
     claims=""
     while IFS= read -r spec; do
         [ -n "$spec" ] || continue
-        for claim in $(sed -n 's#^[[:space:]]*// covers:##p' "$specs_directory/$spec"); do
+        spec_claims=$(sed -n 's#^[[:space:]]*// covers:##p' "$specs_directory/$spec" | tr -d '\r')
+        for claim in $spec_claims; do
             claim="${claim%/}"
             if [ ! -e "$claim" ]; then
                 echo "browser-select: $specs_directory/$spec claims $claim, which does not exist" >&2
@@ -214,10 +216,14 @@ browser-select *paths:
             git cat-file -e "$BASE_SHA^{commit}" 2> /dev/null || every "BASE_SHA $BASE_SHA is not a commit of this clone"
             # a direct comparison also sees a push that moved the branch back; --no-renames lists old and new path
             changed=$(git diff -z --name-only --no-renames "$BASE_SHA" | tr '\0' '\n')
+        elif [ -n "${CI:-}" ]; then
+            every "CI is set and BASE_SHA is empty"
         else
             base="origin/${BASE_REF:-main}"
             fork=$(git merge-base "$base" HEAD 2> /dev/null) || every "no merge base of HEAD with $base"
-            changed=$( { git diff -z --name-only --no-renames "$fork"; git ls-files -z --others --exclude-standard; } | tr '\0' '\n')
+            changed=$(git diff -z --name-only --no-renames "$fork" | tr '\0' '\n')
+            untracked=$(git ls-files -z --others --exclude-standard | tr '\0' '\n')
+            changed+=$'\n'"$untracked"
         fi
     fi
     selected=""
@@ -243,9 +249,10 @@ browser-select *paths:
     pattern=$(printf '%s' "$selected" | sed '/^$/d' | LC_ALL=C sort -u | sed 's/[][\.*^$()+?{}|]/\\&/g' | paste -s -d '|' -)
     echo "@smoke${pattern:+|$pattern}"
 
-# Skipped when the binaries the journeys execute, every file they may read, Bun, the selection and SHARD equal a green
-# run's (TST-015); FULL=true runs every journey and ignores the records; flags go to playwright test, and a run with
-# flags neither reads nor writes a record. CI sets SHARD (1/2) and CI, which installs Chromium.
+# Skipped when the binaries the journeys execute, every file they may read (path, content, executable bit), Bun, the
+# selection and SHARD equal a green run's (TST-015); FULL=true runs every journey and ignores the records; flags go to
+# playwright test, and a run with flags neither reads nor writes a record. CI sets SHARD (1/2) and CI, which installs
+# Chromium.
 # The browser journeys the change needs (browser-select), in parallel, against the server with the frontend (TST-020)
 [positional-arguments]
 ui-e2e *flags: ui-build
@@ -255,17 +262,23 @@ ui-e2e *flags: ui-build
     rm -rf sandbox/ui-e2e && mkdir -p sandbox/ui-e2e
     go build -trimpath -buildvcs=false -ldflags "-X main.version=e2e" -o sandbox/ui-e2e/ {{browser_binaries}}
     selection=$("{{just_executable()}}" browser-select)
+    # the files: every one that exists and git tracks or does not ignore, outside browser_unaffected, and every path a
+    # spec claims even below it (its change selects the spec; claims read as browser-select reads them)
     pathspec=(.)
     for path in {{browser_unaffected}}; do pathspec+=(":(exclude,literal)$path"); done
-    # the binaries, and every file that exists and git tracks or does not ignore outside browser_unaffected: path and content
-    key=$( {
-        shasum -a 256 sandbox/ui-e2e/*
-        git ls-files -z --cached --others --exclude-standard -- "${pathspec[@]}" | while IFS= read -r -d '' file; do
-            if [ -f "$file" ]; then printf '%s\0' "$file"; fi
-        done | LC_ALL=C sort -zu | xargs -0 shasum -a 256
-        bun --version
-        printf 'selection %s\nshard %s\n' "$selection" "${SHARD:-}"
-    } | shasum -a 256 | cut -c1-32)
+    claimed=$(find {{browser_specs}} -type f -name '*.spec.ts' -exec sed -n 's#^[[:space:]]*// covers:##p' {} + | tr -d '\r')
+    {
+        git ls-files -z --cached --others --exclude-standard -- "${pathspec[@]}"
+        if [ -n "$claimed" ]; then (set -f && git --literal-pathspecs ls-files -z --cached --others --exclude-standard -- $claimed); fi
+    } | while IFS= read -r -d '' file; do
+        if [ -f "$file" ]; then printf '%s\0' "$file"; fi
+    done | LC_ALL=C sort -zu > sandbox/ui-e2e-files
+    # each part on its own, so a failing hash fails the recipe instead of shortening the key
+    binary_hashes=$(shasum -a 256 -- sandbox/ui-e2e/*)
+    file_hashes=$(xargs -0 shasum -a 256 -- < sandbox/ui-e2e-files)
+    executables=$(while IFS= read -r -d '' file; do if [ -x "$file" ]; then printf '%s\n' "$file"; fi; done < sandbox/ui-e2e-files)
+    bun_version=$(bun --version)
+    key=$(printf '%s\n' "$binary_hashes" "$file_hashes" "executable:" "$executables" "bun $bun_version" "selection $selection" "shard ${SHARD:-}" | shasum -a 256 | cut -c1-32)
     passed="sandbox/ui-e2e-passed/$key"
     if [ "$#" -eq 0 ] && [ "${FULL:-false}" != true ] && [ -f "$passed" ]; then
         echo "ui-e2e skipped: binaries, files, Bun, selection $selection and shard ${SHARD:-none} equal the green run $key"
