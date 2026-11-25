@@ -249,10 +249,10 @@ browser-select *paths:
     pattern=$(printf '%s' "$selected" | sed '/^$/d' | LC_ALL=C sort -u | sed 's/[][\.*^$()+?{}|]/\\&/g' | paste -s -d '|' -)
     echo "@smoke${pattern:+|$pattern}"
 
-# Skipped when the binaries the journeys execute, every file they may read (path, content, executable bit), Bun, the
-# selection and SHARD equal a green run's (TST-015); FULL=true runs every journey and ignores the records; flags go to
-# playwright test, and a run with flags neither reads nor writes a record. CI sets SHARD (1/2) and CI, which installs
-# Chromium.
+# Skipped when the binaries the journeys execute, every file they may read (path, content, executable bit, a symlink's
+# target), Bun, the selection and SHARD equal a green run's (TST-015); FULL=true runs every journey and ignores the
+# records; flags go to playwright test, and a run with flags neither reads nor writes a record. CI sets SHARD (1/2) and
+# CI, which installs Chromium.
 # The browser journeys the change needs (browser-select), in parallel, against the server with the frontend (TST-020)
 [positional-arguments]
 ui-e2e *flags: ui-build
@@ -262,23 +262,23 @@ ui-e2e *flags: ui-build
     rm -rf sandbox/ui-e2e && mkdir -p sandbox/ui-e2e
     go build -trimpath -buildvcs=false -ldflags "-X main.version=e2e" -o sandbox/ui-e2e/ {{browser_binaries}}
     selection=$("{{just_executable()}}" browser-select)
-    # the files: every one that exists and git tracks or does not ignore, outside browser_unaffected, and every path a
-    # spec claims even below it (its change selects the spec; claims read as browser-select reads them)
+    # the inputs: every path git tracks or does not ignore, outside browser_unaffected, and every path a spec claims even
+    # below it (its change selects the spec; claims read as browser-select reads them, one trailing slash dropped)
     pathspec=(.)
     for path in {{browser_unaffected}}; do pathspec+=(":(exclude,literal)$path"); done
-    claimed=$(find {{browser_specs}} -type f -name '*.spec.ts' -exec sed -n 's#^[[:space:]]*// covers:##p' {} + | tr -d '\r')
+    claimed=$(find {{browser_specs}} -type f -name '*.spec.ts' -exec sed -n 's#^[[:space:]]*// covers:##p' {} + | tr -d '\r' | tr -s '[:blank:]' '\n' | sed 's#/$##')
     {
         git ls-files -z --cached --others --exclude-standard -- "${pathspec[@]}"
         if [ -n "$claimed" ]; then (set -f && git --literal-pathspecs ls-files -z --cached --others --exclude-standard -- $claimed); fi
-    } | while IFS= read -r -d '' file; do
-        if [ -f "$file" ]; then printf '%s\0' "$file"; fi
-    done | LC_ALL=C sort -zu > sandbox/ui-e2e-files
-    # each part on its own, so a failing hash fails the recipe instead of shortening the key
+    } | LC_ALL=C sort -zu > sandbox/ui-e2e-inputs
+    # each part on its own, so a failing hash fails the recipe instead of shortening the key: the files by path and
+    # content (./ so no name reads as an option or as standard input), their executable bit, every symlink's target
     binary_hashes=$(shasum -a 256 -- sandbox/ui-e2e/*)
-    file_hashes=$(xargs -0 shasum -a 256 -- < sandbox/ui-e2e-files)
-    executables=$(while IFS= read -r -d '' file; do if [ -x "$file" ]; then printf '%s\n' "$file"; fi; done < sandbox/ui-e2e-files)
+    file_hashes=$(while IFS= read -r -d '' input; do if [ -f "$input" ]; then printf './%s\0' "$input"; fi; done < sandbox/ui-e2e-inputs | xargs -0 shasum -a 256 --)
+    executables=$(while IFS= read -r -d '' input; do if [ -f "$input" ] && [ -x "$input" ]; then printf '%s\n' "$input"; fi; done < sandbox/ui-e2e-inputs)
+    links=$(while IFS= read -r -d '' input; do if [ -L "$input" ]; then printf '%s -> %s\n' "$input" "$(readlink "$input")"; fi; done < sandbox/ui-e2e-inputs)
     bun_version=$(bun --version)
-    key=$(printf '%s\n' "$binary_hashes" "$file_hashes" "executable:" "$executables" "bun $bun_version" "selection $selection" "shard ${SHARD:-}" | shasum -a 256 | cut -c1-32)
+    key=$(printf '%s\n' "$binary_hashes" "$file_hashes" "executable:" "$executables" "links:" "$links" "bun $bun_version" "selection $selection" "shard ${SHARD:-}" | shasum -a 256 | cut -c1-32)
     passed="sandbox/ui-e2e-passed/$key"
     if [ "$#" -eq 0 ] && [ "${FULL:-false}" != true ] && [ -f "$passed" ]; then
         echo "ui-e2e skipped: binaries, files, Bun, selection $selection and shard ${SHARD:-none} equal the green run $key"
