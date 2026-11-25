@@ -13,7 +13,7 @@ gotestsum := "go tool gotestsum"
 postgrestest := "go tool postgrestest"
 coverage_threshold := "80"
 coverage_excluded := "/cmd/|/internal/repository/internal/sqlc/|/internal/testdatabase/|/test/|/pkg/"
-# Per-test budget (TST-017)
+# Per-test budget: a test over it is reported with a warning, never failed (TST-017)
 test_budget := "5s"
 e2e_inputs := "test/e2e"
 # The browser journeys (TST-020): the specs, the Go programs the journeys execute (the server and every program the
@@ -81,7 +81,7 @@ openapi-check base="":
     go tool oasdiff breaking sandbox/openapi-base.yaml openapi.yaml --fail-on ERR
 
 # Unit tests of changed and affected packages on one PostgreSQL; the Go test cache replays the rest (TST-014, TST-016).
-# Fails below the coverage threshold (TST-010) and when a test took longer than the budget (TST-017)
+# Fails below the coverage threshold (TST-010); reports the slowest tests and those over the budget (TST-017)
 test *flags:
     mkdir -p sandbox
     {{postgrestest}} {{gotestsum}} --format testname --jsonfile sandbox/unit.json -- -race -coverprofile=sandbox/unit.raw.cover {{flags}} ./...
@@ -90,16 +90,28 @@ test *flags:
     awk -v threshold={{coverage_threshold}} '/^total:/ { found = 1; sub("%", "", $3); print "coverage " $3 "%"; if ($3 + 0 < threshold) { print "coverage is below " threshold "%"; exit 1 } } END { if (!found) { print "no coverage total"; exit 1 } }' sandbox/unit.func
     "{{just_executable()}}" test-budget sandbox/unit.json
 
-# Fail when a test in the go test JSON took longer than the budget, also tests replayed from the cache (TST-017).
-# On a failure it drops the test cache: a replayed result keeps its slow duration, so the next run measures again
+# In GitHub Actions also a table in the job summary and a warning annotation per test over the budget. A slow test
+# never fails the run: the hot path cap is the one time limit (TST-018).
+# Report the ten slowest tests of the go test JSON and every test over the budget, cached ones too (TST-017)
 test-budget report:
     #!/usr/bin/env bash
     set -euo pipefail
+    slowest="$({{gotestsum}} tool slowest --jsonfile {{report}} --threshold 1ms --num 10)"
     slow="$({{gotestsum}} tool slowest --jsonfile {{report}} --threshold {{test_budget}})"
+    printf 'slowest tests in %s:\n%s\n' "{{report}}" "${slowest:-none over 1ms}"
     if [ -n "$slow" ]; then
-        printf 'tests over the %s budget (TST-017):\n%s\n' "{{test_budget}}" "$slow"
-        go clean -testcache
-        exit 1
+        printf 'tests over the %s budget (TST-017), a warning, not a failure:\n%s\n' "{{test_budget}}" "$slow"
+        if [ "${GITHUB_ACTIONS:-}" = true ]; then
+            while read -r package test elapsed; do
+                echo "::warning title=TST-017 slow test::$package $test took $elapsed, over the {{test_budget}} budget"
+            done <<< "$slow"
+        fi
+    fi
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -n "$slowest" ]; then
+        {
+            printf '### Slowest tests in %s (budget %s, TST-017)\n\n| Package | Test | Time |\n|---|---|---|\n' "{{report}}" "{{test_budget}}"
+            while read -r package test elapsed; do printf '| `%s` | `%s` | %s |\n' "$package" "$test" "$elapsed"; done <<< "$slowest"
+        } >> "$GITHUB_STEP_SUMMARY"
     fi
 
 # Every unit test, uncached and shuffled: the nightly run and before a release (TST-014, TST-005)

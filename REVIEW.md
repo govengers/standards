@@ -19,7 +19,7 @@ Review against a tagged version of this repo and state it in the report (`standa
 
 ## 4. Run the machines first
 
-If the toolchain is available, run `golangci-lint run` with [.golangci.yml](.golangci.yml), `go vet ./...`, `go test -race ./...` and the end-to-end suite (`just test-e2e`). Report lint, vet and unit test failures as-is under rule `TCH-004`, end-to-end failures under `TST-011`, a test over its time budget (`just test` in a repo from the templates) under `TST-017`. Do not restate what lint already reports as separate rule findings.
+If the toolchain is available, run `golangci-lint run` with [.golangci.yml](.golangci.yml), `go vet ./...`, `go test -race ./...` and the end-to-end suite (`just test-e2e`). Report lint, vet and unit test failures as-is under rule `TCH-004`, end-to-end failures under `TST-011`. A test over its time budget (`just test` in a repo from the templates warns about it) is no finding: list it under "Noticed, not graded" with `TST-017`. Do not restate what lint already reports as separate rule findings.
 
 ## 5. Grade
 

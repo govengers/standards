@@ -62,7 +62,7 @@ func TestIsAdmin(t *testing.T) {
 - **Principle:** P9
 - **Check:** `time.Sleep` to wait for async work; assertions on `time.Now()`; real timers of seconds in tests; retries that wait a real backoff; tests that only pass in a given order or fail under `-count=2`.
 
-Inject a clock, a short interval or the backoff through the options struct; wait on a channel or poll with a deadline instead of sleeping. A sleep is the most common reason a test breaks its time budget (TST-017).
+Inject a clock, a short interval or the backoff through the options struct; wait on a channel or poll with a deadline instead of sleeping. A sleep is the most common reason a test goes over its time budget (TST-017).
 
 ```go
 // bad
@@ -270,24 +270,23 @@ test *flags:
 
 Every test package calls `testdatabase.Main(m)` in its `TestMain`. The `server` variable is the one package variable a test helper may hold (DES-003), and it needs no exception in `.govengers.yml`. A service whose tests need several schemas gives each its own template with `server.WithTemplate`.
 
-### TST-017 Every test stays inside a time budget, read from the test JSON
+### TST-017 Report every test's time from the test JSON; a test over its budget warns, it never fails the run
 
 - **Severity:** should
 - **Principle:** P8, P9
-- **Check:** `just test` or `just test-e2e-all` without a step that fails the run when one test took longer than the budget (default 5 s with the race detector); a budget read from wall clock or log output instead of the JSON of `go test` (`gotestsum --jsonfile`); a test over the budget without its own budget and a reason in the list the step reads.
+- **Check:** `just test` or `just test-e2e-all` without a report of the test times (the ten slowest tests in the job summary, a warning annotation for each test over the budget, default 5 s with the race detector); a budget read from wall clock or log output instead of the JSON of `go test` (`gotestsum --jsonfile`); a step that fails the run because one test took longer than the budget; a slow test kept out of the report by an allowance list without a reason.
 
-A slow test is a defect with a known set of causes: a sleep or a real backoff (TST-005), production cost parameters (Argon2 at production strength costs several seconds per test under `-race`: inject cheap parameters through the options), a server started per test (TST-016), a migration per test. The budget catches each of them the day it is added, instead of the day the suite has become slow. The JSON names every test and subtest with its duration, also for packages replayed from the cache, so the gate sees the whole suite on every run. A parent test counts its sequential subtests.
+A slow test is a defect with a known set of causes: a sleep or a real backoff (TST-005), production cost parameters (Argon2 at production strength costs several seconds per test under `-race`: inject cheap parameters through the options), a server started per test (TST-016), a migration per test. The report names each of them in the pull request that adds it, instead of the day the suite has become slow. It does not fail the run: a wall-clock limit per test on shared runners is noise under load, and it blocks merges the hot path cap would let through. The only hard time rule is the cap of TST-018; when the cap breaks, the report names the test to speed up. The JSON names every test and subtest with its duration, also for packages replayed from the cache (they report the run that was cached), so the report sees the whole suite on every run. A parent test counts its sequential subtests.
 
 ```just
 test_budget := "5s"
 
-# after the tests, in the test recipe
-slow="$(go tool gotestsum tool slowest --jsonfile sandbox/unit.json --threshold {{test_budget}})"; if [ -n "$slow" ]; then printf 'tests over the %s budget (TST-017):\n%s\n' "{{test_budget}}" "$slow"; go clean -testcache; exit 1; fi
+# after the tests, in the test recipe: a warning per test over the budget, never a failure
+slow="$(go tool gotestsum tool slowest --jsonfile sandbox/unit.json --threshold {{test_budget}})"
+if [ -n "$slow" ]; then while read -r package test elapsed; do echo "::warning title=TST-017 slow test::$package $test took $elapsed"; done <<< "$slow"; fi
 ```
 
-A package replayed from the cache reports the durations of the run that was cached. A test that ran over the budget once on a loaded machine would fail every rerun until its package changes, and in CI every pull request that restores that cache. So the step drops the test cache when it fails (`go clean -testcache`): the next run measures again, at the price of one uncached run.
-
-The allowance list, if a repo needs one, names the package, the test, its own budget and the reason, and stays short: each entry is a test somebody should make faster.
+The templates' `test-budget` also prints the ten slowest tests and writes them to the job summary. An allowance list, if a repo needs one, names the package, the test, its own budget and the reason, and stays short: each entry is a test somebody should make faster.
 
 ### TST-018 The hot path stays under ten minutes, and CI fails over it
 
@@ -299,7 +298,7 @@ Every change waits for the pipeline, and a pipeline grows by seconds nobody noti
 
 - **Hot path run:** a run triggered by a pull request or by a push to the default branch. Nothing else decides it: `full: true` on such an event is still capped. Scheduled runs, dispatched runs (`workflow_dispatch`) and `v*` tags are full runs, outside the cap.
 - **Span:** from the run's start (`run_started_at`) to the clock of the required check, whose last step judges the cap. The check needs every job and, on the default branch, the job that tags the pushed image, so the span ends with the check result on a pull request and with the pushed image plus the verdict on the default branch. Every wait counts: for runners, for the image job's turn, for the check's own runner. A busy runner pool makes the run slower, and the verdict says so.
-- **Cap:** 600 s, without margin; the workflow refuses a higher value. A pull request is capped 60 s lower (540 s): the default branch also pushes the image, saves the compile cache and tags, and a pull request must predict that run. So a pull request builds the image for every platform, without pushing it.
+- **Cap:** 600 s, without margin; the workflow refuses a higher value. It is the one hard time limit: per-test times are reported, never failed (TST-017). A pull request is capped 60 s lower (540 s): the default branch also pushes the image, saves the compile cache and tags, and a pull request must predict that run. So a pull request builds the image for every platform, without pushing it.
 - **Blocking:** the verdict is a step of the check branch protection requires, so a pull request over the cap cannot merge and no job can be skipped around it. Where the repository cannot require checks (a private repository on GitHub's free plan has no branch protection), the red check is advisory, and nobody merges a pull request whose check is red. On the default branch the image is out when the verdict falls; the red run is the alarm. The cap judges a run as it ran, with the skips of its green-run records, so a complete re-run or an empty commit after an attempt over the cap can pass: the cap stops a pipeline from growing unnoticed, not a deliberate bypass, and the scheduled full run bounds every job.
 - **Early warning:** the warm and cold budgets, judged over the same span, fail a pull request long before the cap is near: 300 s warm and 480 s cold, failing above 20 % over. Warm means the jobs restored a cache of the same Go release and `go.sum`; cold is a new dependency or toolchain.
 - **Timeouts are a backstop, not the cap:** every job that runs the caller's code gets `timeout-minutes: 10` in a hot path run and 60 in a full run, the required check 5, and no caller input changes them. They end a hung job. The 60 minutes per job keep what moved out of the hot path from growing without limit there: a job of a full run over an hour fails, and the red run opens an issue (TST-021).
@@ -307,7 +306,7 @@ Every change waits for the pipeline, and a pipeline grows by seconds nobody noti
 | In the hot path | Recipe or job |
 |-----------------|---------------|
 | lint, vet | `just lint` |
-| unit tests of changed and affected packages, race detector, coverage gate, 5 s per test | `just test` (TST-014, TST-017) |
+| unit tests of changed and affected packages, race detector, coverage gate, a report of the slowest tests | `just test` (TST-014, TST-017) |
 | API end-to-end suite unless server and suite equal a green run | `just test-e2e` (TST-015) |
 | generated code, migrations and queries, OpenAPI against the base | `generate-check`, `db-check`, `openapi-check` |
 | frontend type-check, component and page tests, build | `just test-typescript` |

@@ -41,7 +41,7 @@ exceptions:             # deliberate deviations, each with a reason
 | [design.md](rules/core/design.md) | `DES` | options pattern, no init, no globals, interfaces, encapsulation |
 | [concurrency.md](rules/core/concurrency.md) | `CON` | goroutines, context, shared state, channels |
 | [resilience.md](rules/core/resilience.md) | `RES` | timeouts, retries, idempotency for outbound calls |
-| [testing.md](rules/core/testing.md) | `TST` | what to test per layer, hermetic tests, the test cache, coverage, end-to-end suites and when to skip them, one PostgreSQL per run, time budgets per test, the ten-minute hot path, browser journeys selected by the change, the alert on a red nightly |
+| [testing.md](rules/core/testing.md) | `TST` | what to test per layer, hermetic tests, the test cache, coverage, end-to-end suites and when to skip them, one PostgreSQL per run, test times reported per test, the ten-minute hot path, browser journeys selected by the change, the alert on a red nightly |
 | [toolchain.md](rules/core/toolchain.md) | `TCH` | Go version, modules, tools, lint, justfile |
 
 ### library - reusable modules
