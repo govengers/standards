@@ -288,7 +288,7 @@ ui-e2e *flags: ui-build
     binary_hashes=$(shasum -a 256 -- sandbox/ui-e2e/*)
     file_hashes=$(while IFS= read -r -d '' input; do if [ -f "$input" ]; then printf './%s\0' "$input"; fi; done < sandbox/ui-e2e-inputs | xargs -0 shasum -a 256 --)
     executables=$(while IFS= read -r -d '' input; do if [ -f "$input" ] && [ -x "$input" ]; then printf '%s\n' "$input"; fi; done < sandbox/ui-e2e-inputs)
-    links=$(while IFS= read -r -d '' input; do if [ -L "$input" ]; then printf '%s -> %s\n' "$input" "$(readlink "$input")"; fi; done < sandbox/ui-e2e-inputs)
+    links=$(while IFS= read -r -d '' input; do if [ -L "$input" ]; then printf '%s -> %s\n' "$input" "$(readlink "./$input")"; fi; done < sandbox/ui-e2e-inputs)
     bun_version=$(bun --version)
     key=$(printf '%s\n' "$binary_hashes" "$file_hashes" "executable:" "$executables" "links:" "$links" "bun $bun_version" "selection $selection" "shard ${SHARD:-}" | shasum -a 256 | cut -c1-32)
     passed="sandbox/ui-e2e-passed/$key"

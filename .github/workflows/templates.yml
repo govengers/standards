@@ -293,6 +293,12 @@ jobs:
           rm ui/e2e/fixtures
           ln -s fixtures-b ui/e2e/fixtures
           expect "the directory symlink retargeted" ran just ui-e2e
+          # a root symlink whose name reads as an option
+          ln -s ui/e2e/fixtures-a ./-fixtures
+          expect "a symlink named -fixtures" ran just ui-e2e
+          rm ./-fixtures
+          ln -s ui/e2e/fixtures-b ./-fixtures
+          expect "-fixtures retargeted" ran just ui-e2e
           # a file the hash cannot read fails the recipe (root reads every file)
           if [ "$(id -u)" != 0 ]; then
             printf 'secret\n' > ui/src/ui/Secret.vue

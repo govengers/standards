@@ -281,18 +281,18 @@ A slow test is a defect with a known set of causes: a sleep or a real backoff (T
 ```just
 test_budget := "5s"
 
-# after the tests, in the test recipe: a warning per test over the budget, never a failure
-slow="$(go tool gotestsum tool slowest --jsonfile sandbox/unit.json --threshold {{test_budget}})"
-if [ -n "$slow" ]; then while read -r package test elapsed; do echo "::warning title=TST-017 slow test::$package $test took $elapsed"; done <<< "$slow"; fi
+# the last line of `test` and `test-e2e-all`: the ten slowest tests, in the job summary too, and a warning per test
+# over the budget
+"{{just_executable()}}" test-budget sandbox/unit.json
 ```
 
-The templates' `test-budget` also prints the ten slowest tests and writes them to the job summary. An allowance list, if a repo needs one, names the package, the test, its own budget and the reason, and stays short: each entry is a test somebody should make faster.
+The recipe `test-budget` is in both justfiles of the [templates](../../templates/): it exits 0 on a slow test and fails only when it cannot read the JSON. An allowance list, if a repo needs one, names the package, the test, its own budget and the reason, and stays short: each entry is a test somebody should make faster.
 
 ### TST-018 The hot path stays under ten minutes, and CI fails over it
 
 - **Severity:** must
 - **Principle:** P8
-- **Check:** a pipeline that gates a deployment without a cap from the run's start to the pushed image (pull request: to the required check), or with a cap above 600 s; a cap that only prints, or that is not judged inside the check branch protection requires; a job timeout raised to make room instead of the suite made faster, split or moved to the scheduled run; a pull request pipeline that does not build the image the default branch pushes; a scheduled run that does not run what the hot path leaves out. With the govengers service workflow (`go-service.yml`): `hot-path-seconds` unset or above 600. With the library workflow (`go-library.yml`): `budget-seconds` unset.
+- **Check:** a pipeline that gates a deployment without a cap from the run's start to the pushed image (pull request: to the check a merge waits for), or with a cap above 600 s; a cap that only prints, or that is not judged inside the one check a merge waits for (required by branch protection where the repository can require checks); a job timeout raised to make room instead of the suite made faster, split or moved to the scheduled run; a pull request pipeline that does not build the image the default branch pushes; a scheduled run that does not run what the hot path leaves out. With the govengers service workflow (`go-service.yml`): `hot-path-seconds` unset or above 600. With the library workflow (`go-library.yml`): `budget-seconds` unset.
 
 Every change waits for the pipeline, and a pipeline grows by seconds nobody notices. Where it bit: a service whose pipeline grew to almost an hour without one change that looked slow. A browser suite of some 240 journeys ran on one worker because the journeys shared state (27 minutes, the job's timeout raised from 20 to 30 to 45 minutes); an upgrade test ran serial scenarios with real 60 s waits (53 minutes); unit tests ran serially on real timers; all of it sat in front of build and deploy. The cap turns that growth into a failure in the pull request that causes it.
 
