@@ -238,7 +238,7 @@ test-e2e: e2e-build
     mkdir -p sandbox/e2e-passed && touch "sandbox/e2e-passed/$key"
 ```
 
-CI carries `sandbox/e2e-passed` from run to run; the nightly run calls `just test-e2e-all`, which never skips. The browser journeys skip the same way: their key is the Go programs they execute (the server and every program the harness runs, built reproducibly after the frontend, so Go code, its dependencies and what it embeds are in the key), every file that exists and git tracks or does not ignore outside `browser_unaffected` (path and content), the Bun version, the selection and the shard. A skip record says "nothing changed", the selection of TST-020 says "which part changed"; the journeys use both, and the record's key includes the selection, so a record satisfies exactly the selection it ran. The full recipes are in [templates/](../../templates/).
+CI carries `sandbox/e2e-passed` from run to run; the nightly run calls `just test-e2e-all`, which never skips. The browser journeys skip the same way: their key is the Go programs they execute (the server and every program the harness runs, built reproducibly after the frontend, so Go code, its dependencies and what it embeds are in the key), every file that exists and git tracks or does not ignore outside `browser_unaffected`, and every path a spec claims (path, content and executable bit), the Bun version, the selection and the shard. A skip record says "nothing changed", the selection of TST-020 says "which part changed"; the journeys use both, and the record's key includes the selection, so a record satisfies exactly the selection it ran. The full recipes are in [templates/](../../templates/).
 
 ### TST-016 One PostgreSQL per test run through govengers/postgrestest, a migrated template copied per test
 
@@ -302,7 +302,7 @@ Every change waits for the pipeline, and a pipeline grows by seconds nobody noti
 - **Cap:** 600 s, without margin; the workflow refuses a higher value. A pull request is capped 60 s lower (540 s): the default branch also pushes the image, saves the compile cache and tags, and a pull request must predict that run. So a pull request builds the image for every platform, without pushing it.
 - **Blocking:** the verdict is a step of the check branch protection requires, so a pull request over the cap cannot merge and no job can be skipped around it. On the default branch the image is out when the verdict falls; the red run is the alarm.
 - **Early warning:** the warm and cold budgets, judged over the same span, fail a pull request long before the cap is near: 300 s warm and 480 s cold, failing above 20 % over. Warm means the jobs restored a cache of the same Go release and `go.sum`; cold is a new dependency or toolchain.
-- **Timeouts are a backstop, not the cap:** every job of a hot path run gets `timeout-minutes: 10`, of a full run 60, and no caller input changes them. They end a hung job. The full run's bound keeps what moved out of the hot path from growing without limit there: a full run over an hour fails and opens an issue (TST-021).
+- **Timeouts are a backstop, not the cap:** every job that runs the caller's code gets `timeout-minutes: 10` in a hot path run and 60 in a full run, the required check 5, and no caller input changes them. They end a hung job. The 60 minutes per job keep what moved out of the hot path from growing without limit there: a job of a full run over an hour fails, and the red run opens an issue (TST-021).
 
 | In the hot path | Recipe or job |
 |-----------------|---------------|
@@ -310,11 +310,11 @@ Every change waits for the pipeline, and a pipeline grows by seconds nobody noti
 | unit tests of changed and affected packages, race detector, coverage gate, 5 s per test | `just test` (TST-014, TST-017) |
 | API end-to-end suite unless server and suite equal a green run | `just test-e2e` (TST-015) |
 | generated code, migrations and queries, OpenAPI against the base | `generate-check`, `db-check`, `openapi-check` |
-| frontend type-check, design lint, component and page tests, build | `just test-typescript` |
+| frontend type-check, component and page tests, build | `just test-typescript` |
 | the browser journeys the change needs | `just ui-e2e` (TST-020) |
 | image build for every platform; push by digest and tags on the default branch | the workflow's image jobs |
 | govulncheck, only when `go.mod`, `go.sum` or the Go release differ from a green scan | `just vulncheck` with a record (TCH-008) |
-| derivation check of a template application, only when the derivation's own inputs differ from a green run | `just derive-check` with a record |
+| derivation check of a template application, only when the derivation's own inputs differ from a green run | `just derive-check` with a record ([playbook](../../playbooks/deriving-an-application.md)) |
 
 | Out of the hot path: nightly, `v*` tags and on demand (`workflow_dispatch`) | Recipe |
 |---|---|
@@ -358,7 +358,7 @@ A browser journey costs seconds, a browser and a running server, and it fails fo
 
 **Own state, in parallel.** A journey creates what it asserts on (its project, its tasks, and its own person where it asserts on a person's inbox or settings) and never reads what another journey wrote. Then any journey can run beside any other: the recipe passes `--fully-parallel`, `--workers` (at least two) and `--global-timeout`, 180 s for a selected run and 600 s for the full set, so the limits hold whatever the Playwright configuration says. A serial block in a spec or a worker limit in the configuration still wins over the flags, which is why the check names them. A suite that no longer fits gets a shard (`SHARD=1/2`, one CI job each), never a longer timeout and never fewer workers.
 
-**Selection.** One recipe, `just ui-e2e`, locally and in CI. It asks `just browser-select` which journeys the change needs and passes the answer to `playwright test --grep`. The changed paths: in CI the diff of `BASE_SHA` (the pull request's base commit, on a push the commit before it) against the checkout, a direct comparison that also sees a push moving the branch back; locally the diff of the merge base of `HEAD` with `origin/${BASE_REF:-main}` against the working tree, plus untracked files. A rename counts with its old and its new path. A base that is not a commit of a full clone (a first push, zeros, a shallow clone) selects every journey.
+**Selection.** One recipe, `just ui-e2e`, locally and in CI. It asks `just browser-select` which journeys the change needs and passes the answer to `playwright test --grep`. The changed paths: in CI the diff of `BASE_SHA` (the pull request's base commit, on a push the commit before it) against the checkout, a direct comparison that also sees a push moving the branch back; locally the diff of the merge base of `HEAD` with `origin/${BASE_REF:-main}` against the working tree, plus untracked files. A rename counts with its old and its new path. A base that is not a commit of a full clone (a first push, zeros, a shallow clone), and CI without `BASE_SHA`, select every journey.
 
 A spec names the paths whose journeys it holds in one comment line, repository relative, space separated; several specs may claim one path:
 
@@ -375,7 +375,7 @@ A spec always covers itself, and the `@smoke` journeys (login, the main journey 
 
 The result is `all` or one pattern, `@smoke|accounts\.spec\.ts|tasks\.spec\.ts`, each spec once; Playwright matches `--grep` against the file name, the titles and the tags of a test, so one invocation runs the selection. A claimed path that does not exist fails the selection with the spec and the path: a typo or a moved page is fixed in the claim, not silently unmapped. Forgetting a claim is safe, an unclaimed page runs every journey. The honest limit: a change of the API contract regenerates the shared client and runs every journey. Selection saves the page-only and backend-only changes; own state and parallelism keep every journey inside the budget.
 
-**Skip and full run.** A selected run skips like TST-015, and its key includes the selection and the shard. `browser_unaffected` is also left out of that key, so it may hold only Go code and embedded files, which the binaries fingerprint, and files no journey process reads. The scheduled run and `v*` tags run every journey (`just ui-e2e-all`, `FULL=true`) and ignore the records. The CI job carries the browser's download between runs and uploads the report on failure. The recipes are in the [service justfile template](../../templates/service/justfile); what they expect of the frontend is in the [templates README](../../templates/README.md).
+**Skip and full run.** A selected run skips like TST-015, and its key includes the selection and the shard. `browser_unaffected` is also left out of that key, so it may hold only Go code and embedded files, which the binaries fingerprint, and files no journey process reads; a path a spec claims stays in the key even below it, since its change selects the spec. The key fails the run when it cannot hash an input, instead of leaving the input out. The scheduled run and `v*` tags run every journey (`just ui-e2e-all`, `FULL=true`) and ignore the records. The CI job carries the browser's download between runs and uploads the report on failure. The recipes are in the [service justfile template](../../templates/service/justfile); what they expect of the frontend is in the [templates README](../../templates/README.md).
 
 Reference: the first service's 23 journeys take 56 s in CI on two workers; three smoke journeys take 2.6 s locally including the frontend build.
 
@@ -383,6 +383,6 @@ Reference: the first service's 23 journeys take 56 s in CI on two workers; three
 
 - **Severity:** must
 - **Principle:** P8
-- **Check:** a scheduled full run without a step that opens or updates an assigned issue when it fails (the govengers `nightly-alert.yml`); an alert that only mails whoever last edited the workflow; an issue a later green run leaves open; a full run and the pushes of a branch in one concurrency group.
+- **Check:** a scheduled full run without a step that opens or updates an assigned issue when it fails (the govengers `nightly-alert.yml`); an alert that only mails whoever last edited the workflow; an issue the next green full run of the same workflow and ref leaves open; a full run and the pushes of a branch in one concurrency group.
 
 What leaves the hot path (TST-018) is checked nowhere else, so a silent red nightly is an unchecked rule. Where it bit: a journey of the full set was red for six nights and nobody was told; GitHub mails a failed scheduled run only to whoever last edited the schedule. The alert keeps one issue per workflow and ref: a red full run opens it and assigns it, every further red run comments on it, and the next newer green full run of the same ref closes it, so the open issues are exactly the red refs. Full runs and pushes sit in separate concurrency groups (`ci-${{ github.ref }}-${{ github.event_name }}`): a nightly never delays a push, and a push never cancels a nightly. The caller job and the assignees variable (`CI_ALERT_ASSIGNEES`) are in the README of govengers/.github.
