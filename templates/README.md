@@ -25,7 +25,7 @@ Starting points for a new govengers repo. Copy the folder of the profile, replac
 - `FULL=true` (the nightly run, `just ui-e2e-all`) ignores every record: every journey, a fresh scan.
 - CI restores the Go build cache and the e2e records from earlier runs: pull requests from the newest main run, main from itself. Main saves the build cache, every run saves its e2e records.
 - `just test-all` and `just test-e2e-all` never skip and shuffle (TST-005). CI runs them nightly and on every `v*` tag, so a release is never tested from the cache.
-- CI fails a service's pull request pipeline that took longer than 300 s with warm caches or 480 s cold, plus 20 % (TST-018).
+- The template's `ci.yml`, until it calls the hot path mode, fails a service's pull request pipeline that took longer than 300 s with warm caches or 480 s cold, plus 20 %. In hot path mode those budgets only warn, and the cap of 600 s fails the run (TST-018).
 
 ## What `ui-e2e` expects of the frontend
 
