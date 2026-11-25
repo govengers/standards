@@ -81,14 +81,22 @@ cd ../inventory && just check
 
 The derived repository is a new repository with its own history; it does not keep a remote to the template. Its README says which template version it was derived from.
 
-## 4. A CI gate derives and builds on every change
+## 4. A CI gate derives and builds the sample application
 
-`just derive-check` derives a sample application into a stable directory (`sandbox/derive-check`, so its test server and Go test cache are reused between runs) and runs the derived application's gates there: build, vet, lint, unit tests, the frontend's checks and build. CI runs it as an extra recipe of the reusable service workflow (`recipes: '["derive-check", ...]'`). The workflow calls a recipe without arguments and exports `FULL=true` on the nightly and tag runs, so the recipe adds `-count=1 -shuffle=on` itself then (TST-014).
+`just derive-check` derives a sample application into a stable directory (`sandbox/derive-check`, so its test server and Go test cache are reused between runs) and runs the derived application's gates there: build, vet, lint, unit tests, the frontend's checks and build. CI runs it as an extra recipe of the reusable service workflow (`recipes: '["derive-check", ...]'`). The workflow calls a recipe without arguments and exports `FULL=true` on the nightly and tag runs, so the recipe adds `-count=1 -shuffle=on` itself then (TST-014) and ignores its record. The record keeps the derivation out of the hot path (TST-018): a change derives when the derivation's own inputs or the justfile changed, the nightly always.
 
 ```just
+derive_inputs := "hack/derive.sh derive"
+
 derive-check *flags:
     #!/usr/bin/env bash
     set -euo pipefail
+    key=$(find {{derive_inputs}} justfile -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 -- | shasum -a 256 | cut -c1-32)
+    passed="$PWD/sandbox/derive-passed/$key"
+    if [ -z "{{flags}}" ] && [ "${FULL:-false}" != true ] && [ -f "$passed" ]; then
+        echo "derive-check skipped: the derivation's inputs equal the green run $key"
+        exit 0
+    fi
     rm -rf sandbox/derive-check
     hack/derive.sh sample github.com/example/sample sandbox/derive-check
     cd sandbox/derive-check
@@ -99,9 +107,10 @@ derive-check *flags:
     full=""
     if [ "${FULL:-false}" = true ]; then full="-count=1 -shuffle=on"; fi # the reusable workflow's full run
     go tool postgrestest go test $full {{flags}} ./... # the template's own test job runs them with the race detector
+    if [ -z "{{flags}}" ]; then mkdir -p "${passed%/*}" && touch "$passed"; fi
 ```
 
-The gate is what makes the manifest true: a foundation file that starts to import a domain package, a migration of the foundation that references a domain table, a frontend page of the foundation that links a domain route all fail it in the pull request that adds them. Reference: the first template application measured 13 s for `just derive-check` locally, and the job ran in parallel with the unit tests in CI.
+The gate is what makes the manifest true: a foundation file that starts to import a domain package, a migration of the foundation that references a domain table, a frontend page of the foundation that links a domain route all fail it, in the pull request when it changes the derivation, otherwise in the night's full run, whose red run opens an issue (TST-021). Reference: the first template application measured 13 s for `just derive-check` locally, and the job ran in parallel with the unit tests in CI.
 
 ## 5. Adding the new domain
 
@@ -115,7 +124,7 @@ The derived application has the foundation and an empty domain. Add the domain o
 | declarations | `internal/controller/<object>.go`, the services in `DomainServices` |
 | wiring | `cmd/server/domain.go` |
 | payloads, enums | `pkg/api/<object>.go`, `internal/generated/domain.go`, then `just generate` |
-| tests | the domain's reads and writes in `cmd/server/domain_test.go`, the end-to-end journey in `test/e2e/<object>_test.go`, the browser smoke journey of the core object (TST-020) |
+| tests | the domain's reads and writes in `cmd/server/domain_test.go`, the end-to-end journey in `test/e2e/<object>_test.go`, the browser journeys of the core object in `ui/e2e/<object>.spec.ts`, one of them `@smoke`, with a `// covers:` line claiming the object's pages (TST-020) |
 | frontend | pages under `ui/src/pages/<Domain>/`, routes and navigation in `ui/src/domain.ts`, fake rows in `ui/test/domain.ts` |
 
 List every new domain file in `derive/domain.txt` if the application is to be a template itself, and keep its own `derive-check` in CI.

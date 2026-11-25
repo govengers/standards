@@ -1,7 +1,9 @@
 name: Templates
 
 # The templates are copied into every new repo, so they are checked like code: workflows with actionlint, the
-# Dockerfile with hadolint, the justfiles by parsing them with just and running their budget step on fixtures.
+# Dockerfile with hadolint, the justfiles by parsing them with just and running their test-time report on fixtures,
+# and the service justfile's journey selection on a miniature repository, by its paths and from a small git history,
+# and its journey record on a stub service.
 on:
   push:
     branches: [main]
@@ -37,16 +39,276 @@ jobs:
           just --justfile templates/service/justfile --summary
           just --justfile templates/library/justfile --summary
 
-      # Both templates' TST-017 step on fixed go test JSON: it passes below the budget and fails above it; their full
+      # Both templates' TST-017 report on fixed go test JSON: the slowest tests in the job summary, a warning annotation
+      # for a test over the budget, never a failure (output captured, so the annotations stay off this run); their full
       # end-to-end run shuffles (TST-014)
       - name: justfiles budget and shuffle
         run: |
+          summary=$(mktemp)
+          budget() { GITHUB_ACTIONS=true GITHUB_STEP_SUMMARY="$summary" just --justfile "$justfile" --set gotestsum "go run gotest.tools/gotestsum@v1.13.0" test-budget "$PWD/.github/testdata/$1"; }
           for justfile in templates/service/justfile templates/library/justfile; do
-            budget() { just --justfile "$justfile" --set gotestsum "go run gotest.tools/gotestsum@v1.13.0" test-budget "$PWD/.github/testdata/$1"; }
-            budget budget-under.json
-            if budget budget-over.json; then
-              echo "$justfile: test-budget passed a test over the budget" >&2
+            : > "$summary"
+            under=$(budget budget-under.json)
+            if grep -q '^::warning' <<< "$under"; then
+              echo "$justfile: test-budget warned about a test below the budget: $under" >&2
               exit 1
             fi
+            grep -q '^| .example\.com/p. | .TestFast. | 100ms |$' "$summary" || { echo "$justfile: test-budget wrote no job summary" >&2; exit 1; }
+            over=$(budget budget-over.json) || { echo "$justfile: test-budget failed on a slow test" >&2; exit 1; }
+            grep -qF '::warning title=TST-017 slow test::example.com/p TestSlow took 6.1s, over the 5s budget' <<< "$over" || { echo "$justfile: no warning for a test over the budget: $over" >&2; exit 1; }
             just --justfile "$justfile" --show test-e2e-all | grep -q -- '-shuffle=on'
           done
+          rm -f "$summary"
+
+      # The service justfile's browser-select (TST-020) on the miniature repository in .github/testdata/journeys: the
+      # paths as arguments. Every case but one sets FULL=false, so the step also passes where FULL is set
+      - name: justfile journey selection
+        run: |
+          justfile="$PWD/templates/service/justfile"
+          journeys="$PWD/.github/testdata/journeys"
+          failed=0
+          browser_select() { just --justfile "$justfile" --working-directory "$journeys" browser-select "$@"; }
+          expect() {
+            want="$1"
+            shift
+            got=$(FULL=false browser_select "$@") || got="exit $?"
+            if [ "$got" != "$want" ]; then
+              echo "browser-select $*: got '$got', want '$want'" >&2
+              failed=1
+            fi
+          }
+          expect '@smoke' ''
+          expect '@smoke' internal/service/user.go
+          expect '@smoke|accounts\.spec\.ts' ui/src/pages/Users/Users.vue
+          expect '@smoke|tasks\.spec\.ts' ui/e2e/tasks.spec.ts
+          expect '@smoke|accounts\.spec\.ts' ui/src/pages/Users/Users.test.ts
+          expect '@smoke|tasks\.spec\.ts' changelog/0.1.md
+          expect '@smoke' docs/notes.md
+          expect 'all' ui/src/ui/Button/Button.vue
+          expect 'all' ui/bun.lock
+          expect 'all' justfile
+          expect 'all' assets/logo.svg
+          expect 'all' ui/e2e/helpers.ts
+          expect '@smoke|accounts\.spec\.ts|tasks\.spec\.ts' ui/src/pages/Task/Task.vue ui/src/pages/Users/Users.vue
+          expect '@smoke|tasks\.spec\.ts' ui/src/pages/Board/Board.vue ui/e2e/tasks.spec.ts ui/src/pages/Task/Task.vue
+          expect '@smoke|accounts\.spec\.ts' './ui/src/pages/Users/User List.vue' 'docs/release notes.md'
+          got=$(FULL=true browser_select ui/src/pages/Users/Users.vue)
+          if [ "$got" != all ]; then
+            echo "browser-select with FULL=true: got '$got', want 'all'" >&2
+            failed=1
+          fi
+          # a claim of a path that does not exist fails and names the spec and the path, also with FULL=true
+          broken=$(mktemp -d)
+          cp -R "$journeys/." "$broken"
+          cp "$broken/ui/e2e/broken.spec.ts.txt" "$broken/ui/e2e/broken.spec.ts"
+          for full in false true; do
+            if error=$(FULL=$full just --justfile "$justfile" --working-directory "$broken" browser-select docs/notes.md 2>&1); then
+              echo "browser-select with FULL=$full passed a claim of a missing path: $error" >&2
+              failed=1
+            elif ! grep -qF 'ui/e2e/broken.spec.ts claims ui/src/pages/Missing, which' <<< "$error"; then
+              echo "browser-select with FULL=$full failed without naming the spec and the missing path: $error" >&2
+              failed=1
+            fi
+          done
+          # a claim line with a Windows line ending
+          rm "$broken/ui/e2e/broken.spec.ts"
+          printf '// covers: ui/src/pages/Users\r\nimport { test } from "@playwright/test"\r\n' > "$broken/ui/e2e/windows.spec.ts"
+          got=$(FULL=false just --justfile "$justfile" --working-directory "$broken" browser-select ui/src/pages/Users/Users.vue) || got="exit $?"
+          if [ "$got" != '@smoke|accounts\.spec\.ts|windows\.spec\.ts' ]; then
+            echo "browser-select with a CRLF claim line: got '$got'" >&2
+            failed=1
+          fi
+          rm -rf "$broken"
+          exit "$failed"
+
+      # browser-select without arguments, asking git: a copy of the miniature repository with a small history
+      - name: justfile journey selection from git
+        run: |
+          justfile="$PWD/templates/service/justfile"
+          repository=$(mktemp -d)
+          cp -R .github/testdata/journeys/. "$repository"
+          cd "$repository"
+          export GIT_AUTHOR_NAME=templates GIT_AUTHOR_EMAIL=templates@example.invalid GIT_COMMITTER_NAME=templates GIT_COMMITTER_EMAIL=templates@example.invalid
+          commit() { git add -A && git -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm "$1" && git rev-parse HEAD; }
+          page() { printf '<template>\n  <h1>%s</h1>\n  <p>A page of the miniature repository, long enough for rename detection.</p>\n</template>\n' "$1"; }
+          failed=0
+          expect() {
+            want="$1"
+            shift
+            got=$(env "$@" FULL=false just --justfile "$justfile" --working-directory "$PWD" browser-select) || got="exit $?"
+            if [ "$got" != "$want" ]; then
+              echo "browser-select on $(git rev-parse --abbrev-ref HEAD) with $*: got '$got', want '$want'" >&2
+              failed=1
+            fi
+          }
+          git init -q -b main
+          page Users > ui/src/pages/Users/Users.vue
+          page Button > ui/src/ui/Button.vue
+          base=$(commit base)
+
+          # a page file changed on the branch: its spec
+          git switch -q -c page
+          page 'All users' > ui/src/pages/Users/Users.vue
+          commit page > /dev/null
+          expect '@smoke|accounts\.spec\.ts' BASE_SHA="$base"
+          # zeros, and a commit that is not in the clone: every journey
+          expect all BASE_SHA=0000000000000000000000000000000000000000
+          expect all BASE_SHA=1234567890abcdef1234567890abcdef12345678
+
+          # the base is ahead of the checkout (the branch moved back) and a shared file differs: every journey
+          git switch -q -c ahead "$base"
+          page 'A shared button' > ui/src/ui/Button.vue
+          ahead=$(commit ahead)
+          git switch -q --detach "$base"
+          expect all BASE_SHA="$ahead"
+
+          # a page file renamed out of a claimed directory: the spec of the old path
+          git switch -q -c rename "$base"
+          mkdir docs
+          git mv ui/src/pages/Users/Users.vue docs/Users.vue
+          commit rename > /dev/null
+          expect '@smoke|accounts\.spec\.ts' BASE_SHA="$base"
+
+          # locally, without BASE_SHA: the merge base with origin/main (which gained a shared change since), against the
+          # working tree, untracked files included
+          git update-ref refs/remotes/origin/main "$ahead"
+          git switch -q -c local "$base"
+          page Account > ui/src/pages/Users/Account.vue
+          commit local > /dev/null
+          page 'My board' > 'ui/src/pages/Board/My Board.vue'
+          expect '@smoke|accounts\.spec\.ts|tasks\.spec\.ts' -u BASE_SHA -u CI
+          # a base branch without a remote ref, and CI without BASE_SHA: every journey
+          expect all -u BASE_SHA -u CI BASE_REF=release
+          expect all -u BASE_SHA CI=true
+          # a shallow clone, even with the base inside it: every journey
+          shallow=$(mktemp -d)
+          git clone -q --depth 2 --branch rename --no-local "file://$repository" "$shallow/clone"
+          cd "$shallow/clone"
+          git update-ref refs/remotes/origin/main HEAD
+          expect all BASE_SHA="$base"
+          expect all -u BASE_SHA -u CI
+          cd /
+          rm -rf "$repository" "$shallow"
+          exit "$failed"
+
+      # The service justfile's ui-e2e key and record (TST-015, TST-020) on a stub service: the miniature repository's
+      # specs, two Go programs for browser_binaries, and bun and bunx replaced by shims that log what would run
+      - name: justfile journey records
+        run: |
+          template="$PWD/templates/service/justfile"
+          work=$(mktemp -d)
+          mkdir -p "$work/bin" "$work/service"
+          cp -R .github/testdata/journeys/. "$work/service"
+          cat > "$work/bin/bun" << 'SHIM'
+          #!/usr/bin/env bash
+          if [ "${1:-}" = --version ]; then echo 1.4.4; fi
+          SHIM
+          cat > "$work/bin/bunx" << 'SHIM'
+          #!/usr/bin/env bash
+          echo "bunx $*" >> "$PLAYWRIGHT_LOG"
+          exit "${BUNX_EXIT:-0}"
+          SHIM
+          chmod +x "$work/bin/bun" "$work/bin/bunx"
+          export PATH="$work/bin:$PATH" PLAYWRIGHT_LOG="$work/playwright.log"
+          cd "$work/service"
+          sed 's#^browser_binaries := .*#browser_binaries := "./cmd/server ./cmd/postgrestest"#' "$template" > justfile
+          printf 'sandbox/\n' > .gitignore
+          go mod init example.com/service 2> /dev/null
+          mkdir -p cmd/server cmd/postgrestest docs
+          printf 'package main\n\nfunc main() {}\n' > cmd/server/main.go
+          # stands in for postgrestest: runs its arguments
+          printf 'package main\n\nimport (\n\t"os"\n\t"os/exec"\n)\n\nfunc main() {\n\tcommand := exec.Command(os.Args[1], os.Args[2:]...)\n\tif command.Run() != nil {\n\t\tos.Exit(1)\n\t}\n}\n' > cmd/postgrestest/main.go
+          # a claim line with a Windows line ending and a trailing slash on a file: the key reads it as browser-select does
+          printf '// covers: docs/guide.md/\r\n' > ui/e2e/guide.spec.ts
+          printf 'v1\n' > docs/guide.md
+          export GIT_AUTHOR_NAME=templates GIT_AUTHOR_EMAIL=templates@example.invalid GIT_COMMITTER_NAME=templates GIT_COMMITTER_EMAIL=templates@example.invalid
+          git init -q -b main
+          git add -A && git -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm base
+          git update-ref refs/remotes/origin/main HEAD
+          failed=0
+          records() { find sandbox/ui-e2e-passed -type f 2> /dev/null | wc -l | tr -d ' '; }
+          # expect <case> ran|skipped|failed <environment and command>
+          expect() {
+            name="$1" want="$2"
+            shift 2
+            : > "$work/playwright.log"
+            if env -u CI -u BASE_SHA -u SHARD -u FULL -u BUNX_EXIT "$@" > "$work/out.log" 2>&1; then
+              if grep -q '^ui-e2e skipped' "$work/out.log"; then got=skipped; elif grep -q 'playwright test' "$work/playwright.log"; then got=ran; else got=nothing; fi
+            else
+              got=failed
+            fi
+            if [ "$got" != "$want" ]; then
+              echo "ui-e2e, $name: got $got, want $want" >&2
+              cat "$work/out.log" >&2
+              failed=1
+            fi
+          }
+          expect "first run" ran just ui-e2e
+          expect "second run" skipped just ui-e2e
+          before=$(records)
+          expect "a run with flags" ran just ui-e2e --list
+          [ "$(records)" = "$before" ] || { echo "ui-e2e: a run with flags wrote a record" >&2; failed=1; }
+          expect "FULL=true, a new state" ran FULL=true just ui-e2e
+          expect "SHARD=1/2" ran SHARD=1/2 just ui-e2e
+          expect "SHARD=1/2 again" skipped SHARD=1/2 just ui-e2e
+          # a claimed path below browser_unaffected is in the key
+          printf 'v2\n' > docs/guide.md
+          expect "a run with flags on a new state" ran just ui-e2e --list
+          expect "a claimed doc changed, after a run with flags" ran just ui-e2e
+          grep -qF -- '--grep @smoke|guide\.spec\.ts' "$work/playwright.log" || { echo "ui-e2e: the claimed doc did not select its spec" >&2; failed=1; }
+          printf 'v3\n' > docs/guide.md
+          expect "the claimed doc changed again" ran just ui-e2e
+          # a red run writes no record
+          printf 'v4\n' > docs/guide.md
+          before=$(records)
+          expect "a red run" failed BUNX_EXIT=1 just ui-e2e
+          [ "$(records)" = "$before" ] || { echo "ui-e2e: a red run wrote a record" >&2; failed=1; }
+          expect "after the red run" ran just ui-e2e
+          git checkout -q docs/guide.md
+          # an untracked file in a shared directory runs every journey and is not served by FULL=true's record
+          printf 'new\n' > ui/src/ui/New.vue
+          expect "an untracked shared file" ran just ui-e2e
+          expect "the untracked shared file again" skipped just ui-e2e
+          expect "FULL=true on a recorded state" ran FULL=true just ui-e2e
+          grep -qF -- '--global-timeout=600000' "$work/playwright.log" || { echo "ui-e2e: FULL=true without the full run's timeout" >&2; failed=1; }
+          # the executable bit is in the key
+          chmod +x ui/e2e/accounts.spec.ts
+          expect "a mode change" ran just ui-e2e
+          # a file name that reads as an option is hashed
+          printf '1\n' > ./-a.md
+          expect "a file named -a.md" ran just ui-e2e
+          printf '2\n' > ./-a.md
+          expect "-a.md changed" ran just ui-e2e
+          # a root file named - is hashed, not read as standard input
+          printf '1\n' > ./-
+          expect "a file named -" ran just ui-e2e
+          printf '2\n' > ./-
+          expect "- changed" ran just ui-e2e
+          # a symlink to a directory is in the key by its target
+          mkdir -p ui/e2e/fixtures-a ui/e2e/fixtures-b
+          printf 'a\n' > ui/e2e/fixtures-a/data.json
+          printf 'b\n' > ui/e2e/fixtures-b/data.json
+          ln -s fixtures-a ui/e2e/fixtures
+          expect "a directory symlink" ran just ui-e2e
+          rm ui/e2e/fixtures
+          ln -s fixtures-b ui/e2e/fixtures
+          expect "the directory symlink retargeted" ran just ui-e2e
+          # a root symlink whose name reads as an option
+          ln -s ui/e2e/fixtures-a ./-fixtures
+          expect "a symlink named -fixtures" ran just ui-e2e
+          rm ./-fixtures
+          ln -s ui/e2e/fixtures-b ./-fixtures
+          expect "-fixtures retargeted" ran just ui-e2e
+          # a file the hash cannot read fails the recipe (root reads every file)
+          if [ "$(id -u)" != 0 ]; then
+            printf 'secret\n' > ui/src/ui/Secret.vue
+            chmod 000 ui/src/ui/Secret.vue
+            expect "an unreadable file" failed just ui-e2e
+            rm -f ui/src/ui/Secret.vue
+          fi
+          # CI installs the browser
+          expect "CI" ran CI=true BASE_SHA="$(git rev-parse HEAD)" just ui-e2e
+          grep -q 'playwright install' "$work/playwright.log" || { echo "ui-e2e: CI did not install the browser" >&2; failed=1; }
+          cd /
+          rm -rf "$work"
+          exit "$failed"

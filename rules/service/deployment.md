@@ -55,7 +55,7 @@ USER 65532:65532 # distroless nonroot, numeric so runAsNonRoot can verify it
 ENTRYPOINT ["/server"]
 ```
 
-The full version with cross-compilation, digest-pinned bases and a build cache mount is [templates/service/docker/server.Dockerfile](../../templates/service/docker/server.Dockerfile).
+The full version with cross-compilation, digest-pinned bases and a build cache mount is [templates/service/docker/server.Dockerfile](../../templates/service/docker/server.Dockerfile). The compile cache mount is carried between CI runs by the service workflow (govengers `go-service.yml`); the dependency layers stay for local builds.
 
 `-s -w` strips the symbol table and DWARF. Panic stack traces still show functions and lines (they come from the runtime's own tables); what you lose is debugger support, which a production image does not need.
 
