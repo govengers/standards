@@ -324,13 +324,13 @@ Every change waits for the pipeline, and a pipeline grows by seconds nobody noti
 
 The image fits because it is built beside the checks, with the compile cache carried between runs (DEP-002), and tagged only after every check passed: a deploy follows tags, so nothing deploys an image whose checks failed. The govengers service workflow does this with `hot-path-seconds: 600`; the library workflow judges its job's own clock against `budget-seconds`. Their inputs are in the README of govengers/.github.
 
-Reference: the first service built on the whole library set (unit, end-to-end, browser and derivation jobs in parallel, PostgreSQL 18, race detector, coverage). Rows marked pending are measured on its first runs in hot path mode.
+Reference: the first service built on the whole library set (unit, end-to-end, browser and derivation jobs in parallel, PostgreSQL 18, race detector, coverage). The hot path rows are its first runs in hot path mode, on self-hosted runners with 2 CPU per runner pod and `GOMAXPROCS=4`.
 
 | Run | Runner | Wall clock |
 |-----|--------|-----------|
-| hot path, pull request, warm caches | pending | pending |
-| hot path, pull request, cold caches (nothing restored) | pending | pending |
-| hot path, push to the default branch, to the pushed image | pending | pending |
+| hot path, pull request, warm caches | self-hosted, 2 CPU | 164 to 204 s |
+| hot path, pull request, cold caches (nothing restored) | self-hosted, 2 CPU | 325 s |
+| hot path, push to the default branch, to the pushed image | self-hosted, 2 CPU | 279 s; the first push took 827 s, over the cap (a cold compile cache on the branch plus a builder teardown in the tag job, since fixed) |
 | before the hot path: push to the default branch, checks then image | GitHub-hosted | 565 to 705 s |
 | before the hot path: pull request, checks only, cold and warm caches | GitHub-hosted | 326 s, 68 s |
 | every browser journey (23), two workers | GitHub-hosted | 56 s |
