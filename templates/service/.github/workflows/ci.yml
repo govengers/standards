@@ -2,13 +2,16 @@ name: CI
 
 # Template for a govengers service (govengers/standards templates/service). Replace "example" with the service name.
 #
-# Every push and pull request, in parallel jobs: lint and vulncheck, unit tests of changed and affected packages
-# (TST-014), the end-to-end suite unless server and suite are unchanged (TST-015), the frontend's
-# `just test-typescript`, and one job per recipe in `recipes`; then the pipeline budget (TST-018). A push to main
-# or a v* tag then builds, attests and pushes the image: :main on main, :1.2.3 and the moving :1.2, :1, :latest on
-# a tag. Nightly and on v* tags: every test, uncached and shuffled, so a flaky test cannot hide in the cache for
-# longer than a day and a release is never tested from the cache. Require the check
-# `service / check / lint, test, e2e, vulncheck` in branch protection.
+# Every pull request and push to main is a hot path run (TST-018), in parallel jobs: lint and vulncheck, unit tests
+# of changed and affected packages (TST-014), the end-to-end suite unless server and suite are unchanged (TST-015),
+# the frontend's `just test-typescript`, the browser journeys the change needs (`just ui-e2e`, TST-020), one job per
+# recipe in `recipes`, and the image, built beside them. The required check judges the run against the cap of
+# 600 s (540 s on a pull request), the one hard time limit; the warm and cold budgets only warn. A push to main then
+# tags and attests the image (:main), a v* tag :1.2.3 and the moving :1.2, :1, :latest. Nightly, on v* tags and on
+# demand (workflow_dispatch): every test uncached and shuffled, every journey and a fresh vulnerability scan, so a
+# flaky test cannot hide in the cache for longer than a day and a release is never tested from the cache. A red
+# scheduled or dispatched run opens an issue assigned to the logins in the variable CI_ALERT_ASSIGNEES (TST-021).
+# Require the check `service / check / lint, test, e2e, vulncheck` in branch protection.
 on:
   push:
     branches: [main]
@@ -16,13 +19,15 @@ on:
   pull_request:
   schedule:
     - cron: "17 2 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A new push to a pull request cancels its older run; pushes to main and tags always finish.
+# One group per ref and event: a new push to a pull request cancels its older run; pushes to main, tags and full
+# runs always finish, and a full run never waits for a push or the other way round (TST-021).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -31,16 +36,30 @@ jobs:
     with:
       image: ghcr.io/govengers/example
       dockerfile: docker/server.Dockerfile
-      full: ${{ github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v') }}
-      # Bun on every job's PATH (squawk in db-check) and the TypeScript job; a service without UI keeps it and
-      # sets typescript: false
+      full: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+      # Bun on every job's PATH (squawk in db-check) and the TypeScript job; a service without UI keeps it, sets
+      # typescript: false and deletes browser
       bun-version: "1.4.4"
       recipes: '["generate-check", "db-check", "openapi-check"]' # each in its own job
-      budget-warm-seconds: 300 # TST-018: fails a pipeline over 5 minutes (+20 %) with warm caches
+      browser: ui-e2e # the browser journeys the change needs, one job per shard (TST-020)
+      hot-path-seconds: 600 # TST-018: the cap from the run's start to the pushed image; fails the run over it
+      budget-warm-seconds: 300 # early warning over 5 minutes (+20 %) with warm caches, never a failure
       budget-cold-seconds: 480 # and over 8 minutes cold
     permissions:
       contents: write # badges branch
       packages: write # push to ghcr.io
       id-token: write # keyless signing of the build provenance
       attestations: write # store the attestation
-      actions: read # the budget job reads the run's job times
+      actions: read # check reads the run's job times
+
+  # A red scheduled or dispatched run opens an issue, every further red run comments, the next green one closes it
+  alert:
+    needs: service
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    uses: govengers/.github/.github/workflows/nightly-alert.yml@v1
+    with:
+      result: ${{ needs.service.result }}
+      assignees: ${{ vars.CI_ALERT_ASSIGNEES }}
+    permissions:
+      issues: write # the issue of a red scheduled or dispatched run
+      actions: read # its failed jobs
