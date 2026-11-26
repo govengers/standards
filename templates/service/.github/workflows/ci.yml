@@ -9,9 +9,9 @@ name: CI
 # 600 s (540 s on a pull request), the one hard time limit; the warm and cold budgets only warn. A push to main then
 # tags and attests the image (:main), a v* tag :1.2.3 and the moving :1.2, :1, :latest. Nightly, on v* tags and on
 # demand (workflow_dispatch): every test uncached and shuffled, every journey and a fresh vulnerability scan, so a
-# flaky test cannot hide in the cache for longer than a day and a release is never tested from the cache; a red full
-# run opens an issue assigned to the logins in the variable CI_ALERT_ASSIGNEES (TST-021). Require the check
-# `service / check / lint, test, e2e, vulncheck` in branch protection.
+# flaky test cannot hide in the cache for longer than a day and a release is never tested from the cache. A red
+# scheduled or dispatched run opens an issue assigned to the logins in the variable CI_ALERT_ASSIGNEES (TST-021).
+# Require the check `service / check / lint, test, e2e, vulncheck` in branch protection.
 on:
   push:
     branches: [main]
@@ -61,5 +61,5 @@ jobs:
       result: ${{ needs.service.result }}
       assignees: ${{ vars.CI_ALERT_ASSIGNEES }}
     permissions:
-      issues: write # the issue of a red full run
+      issues: write # the issue of a red scheduled or dispatched run
       actions: read # its failed jobs
